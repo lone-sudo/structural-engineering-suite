@@ -1,5 +1,31 @@
 # Changelog
 
+## v25 — Fix column service-load double-counting bug
+
+**Real bug, found from a user report, not a hypothetical.** Column
+Design's `N_service` (which feeds Pad Footing Design's 🔗 "pull axial load"
+link) was double-counting the beam's dead load (Gk) in the normal load
+path — a leftover from a variable (`gk_total`) meaning two different things
+across the module's "legacy" and normal load-input branches. The line
+computing `N_service` was written for the legacy branch's meaning and
+never updated when the normal branch was added.
+
+**Impact**: for any ordinary dead-load-dominant column (Gk noticeably
+larger than Qk — the normal case for most concrete buildings, not an edge
+case), the service load could come out HIGHER than the ultimate load,
+which Pad Footing Design correctly rejects as physically nonsensical
+("Ultimate axial load should not be less than service axial load"). This
+is exactly the bug reported: it reproduced on essentially every realistic
+input, not intermittently.
+
+**Fix**: `N_service` now adds the column's own self-weight only, since the
+beam's service load (`N_serv_beams`) already includes the beam's Gk once,
+correctly. Verified by hand-calculation match, not just "tests pass."
+
+1 new regression test (39 total) that reproduces the exact reported
+scenario and hand-verifies the corrected numbers, plus confirms the
+legacy load path (which was already correct) remains unaffected.
+
 ## v24 — Fix 3D chart scroll-trap; improve help search recall
 
 **3D preview scroll trap fixed properly.** Plotly 3D (WebGL) canvases can

@@ -95,6 +95,31 @@ def test_column_rejects_negative_applied_moment():
         ColumnDesign(b=300, h=300, num_floors=2, Gk_beam_per_floor=50, Qk_beam_per_floor=25, Mx_applied=-5.0)
 
 
+def test_column_service_load_never_exceeds_ultimate_for_ordinary_dead_load_dominant_case():
+    # Regression test: N_service previously double-counted the beam's Gk
+    # (via a reused `gk_total` variable meaning different things in the
+    # legacy vs. normal load paths), so an entirely ordinary dead-load-
+    # dominant column — ordinary in real buildings, not an edge case —
+    # could come back with a service load HIGHER than its own ultimate
+    # load. That broke the Pad Footing Design 🔗 link, which rejects
+    # N_ultimate < N_service as physically nonsensical.
+    c = ColumnDesign(b=300, h=300, num_floors=3, Gk_beam_per_floor=60, Qk_beam_per_floor=20, f_cu=25, f_y=460, code="BS8110")
+    r = c.design_column()
+    assert r["N_serv_to_footing_kN"] < r["N_ult_total_kN"]
+
+    # Hand-calculated expected service load: (60+20)*3 beam service load,
+    # plus the column's own self-weight (0.3*0.3*3*24 per floor) — the beam's
+    # Gk must appear in this total exactly once, not twice.
+    expected_service = (60 + 20) * 3 + (0.3 * 0.3 * 3 * 24) * 3
+    assert abs(r["N_serv_to_footing_kN"] - expected_service) < 0.5
+
+    # The legacy (pre-set ultimate-beam-reaction) load path was already
+    # correct before this fix and must remain so.
+    c2 = ColumnDesign(b=300, h=300, num_floors=3, N_beam_per_floor=100, f_cu=25, f_y=460, code="BS8110")
+    r2 = c2.design_column()
+    assert r2["N_serv_to_footing_kN"] < r2["N_ult_total_kN"]
+
+
 def test_footing_checks_service_bearing():
     f = PadFooting(300, 450, 300, 300, 150, code="Eurocode 2")
     L, B, q = f.size_plan_dimensions()

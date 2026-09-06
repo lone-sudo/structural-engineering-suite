@@ -99,7 +99,14 @@ class ColumnDesign:
 
         N_ult_self = self.gamma_g * self.gk_col_self * self.num_floors
         N_ult = N_ult_beams + N_ult_self
-        N_service = N_serv_beams + gk_total
+        # N_service must be the unfactored beam service load plus the column's
+        # OWN self-weight only. In the non-legacy branch, gk_total already
+        # includes the beam's Gk (it's used for audit/reporting), so adding
+        # it here again would double-count the beam dead load — which is
+        # exactly what was happening before this fix, and is why a perfectly
+        # ordinary dead-load-dominant column could come out with a service
+        # load higher than its own ultimate load.
+        N_service = N_serv_beams + self.gk_col_self * self.num_floors
 
         Ag = self.b * self.h
         if self.code == "BS8110":
