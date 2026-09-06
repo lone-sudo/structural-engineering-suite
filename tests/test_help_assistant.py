@@ -8,6 +8,22 @@ def test_status_meaning_query_finds_the_right_faq_entry():
     assert "status-meaning" in top_ids or "not-checked-vs-pass" in top_ids
 
 
+def test_casual_wordy_phrasing_still_finds_the_right_entry():
+    # A long, casually-worded query containing the key terms should not be
+    # penalised just for having extra filler words around them.
+    results = search("what's the deal with this NOT CHECKED thing")
+    assert results
+    top_ids = [e["id"] for _, e in results]
+    assert "status-meaning" in top_ids or "ec2-shear-deflection-gap" in top_ids or "not-checked-vs-pass" in top_ids
+
+
+def test_genuinely_unrelated_casual_query_returns_no_match():
+    results = search("my beam has an error I don't understand")
+    assert results == []
+    results2 = search("the app crashed and won't calculate")
+    assert results2 == []
+
+
 def test_dxf_query_finds_dxf_faq():
     results = search("my dxf file will not open in autocad")
     assert results

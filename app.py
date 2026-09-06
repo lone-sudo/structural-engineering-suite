@@ -775,22 +775,35 @@ elif module == "Whole Building Automated Design":
             fig_f = SectionVisualizer.draw_footing_elevation(pad_L_m=pad_L, pad_h_mm=300, col_dim_mm=200)
             st.plotly_chart(fig_f, use_container_width=True)
 
-        # Keep the interactive 3D viewer as the final visual block. The page has
-        # no content after it, so mouse-wheel capture cannot prevent access to
-        # later engineering results. It is deliberately opt-in and lightweight.
+        # The interactive 3D chart is shown inside a modal dialog, not inline in
+        # the page. 3D (WebGL) canvases can capture mouse-wheel scroll and block
+        # it from reaching the page even with scrollZoom disabled — a known
+        # browser/Plotly interaction issue, not something fixable by chart
+        # config alone. A dialog with an explicit Close button guarantees an
+        # escape route instead of relying on the mouse landing in exactly the
+        # right spot to resume scrolling.
         st.markdown("---")
         st.subheader("Structural 3D Preview")
-        st.caption("Optional interactive structural schematic. It is placed last intentionally so normal page scrolling is not interrupted by the 3D canvas.")
-        geometry = GridGeometry(
-            tuple(st.session_state.project_data["geometry"]["x_spacings"]),
-            tuple(st.session_state.project_data["geometry"]["y_spacings"]),
-            tuple(tuple(c) for c in st.session_state.project_data["geometry"]["columns"]),
-        )
-        fig_3d = BayFrame3D.plot_3d_geometry(geometry=geometry, num_storeys=int(num_floors))
-        st.plotly_chart(
-            fig_3d, use_container_width=True,
-            config={"scrollZoom": False, "displaylogo": False, "responsive": True, "modeBarButtonsToRemove": ["lasso2d", "select2d"]}
-        )
+        st.caption("Optional interactive structural schematic, shown in a popup window so it never interferes with scrolling the rest of the page.")
+
+        @st.dialog("Structural 3D Preview", width="large")
+        def _show_3d_preview():
+            st.caption("Drag to rotate, right-click-drag or pinch to zoom. Close this window to return to the page — page scrolling is never affected while this is closed.")
+            geometry = GridGeometry(
+                tuple(st.session_state.project_data["geometry"]["x_spacings"]),
+                tuple(st.session_state.project_data["geometry"]["y_spacings"]),
+                tuple(tuple(c) for c in st.session_state.project_data["geometry"]["columns"]),
+            )
+            fig_3d = BayFrame3D.plot_3d_geometry(geometry=geometry, num_storeys=int(num_floors))
+            st.plotly_chart(
+                fig_3d, use_container_width=True,
+                config={"scrollZoom": False, "displaylogo": False, "responsive": True, "modeBarButtonsToRemove": ["lasso2d", "select2d"]}
+            )
+            if st.button("Close"):
+                st.rerun()
+
+        if st.button("🧊 Open interactive 3D preview"):
+            _show_3d_preview()
 
 # ==========================================
 # 3. CONTINUOUS BEAM (RCC41)

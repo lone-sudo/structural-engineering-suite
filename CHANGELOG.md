@@ -1,5 +1,36 @@
 # Changelog
 
+## v24 — Fix 3D chart scroll-trap; improve help search recall
+
+**3D preview scroll trap fixed properly.** Plotly 3D (WebGL) canvases can
+capture and block the mouse-wheel scroll event even with `scrollZoom: False`
+set — a known browser/Plotly interaction issue, not something fixable by
+chart configuration alone. The 3D preview in Whole Building Design is now
+opened via an explicit button into a modal dialog (`st.dialog`) with a
+visible **Close** button, rather than sitting inline in the page's normal
+scroll flow. There is no longer any state where the page can get "stuck" —
+if the dialog isn't open, the 3D canvas doesn't exist on the page at all.
+
+**Help search recall improved.** The keyword-overlap scoring previously
+divided by the *query's* word count, so a long, casually-phrased question
+("what's the deal with this NOT CHECKED thing") got diluted by its own
+filler words and scored lower than a short, precise one — even though it
+contained the exact right terms. Switched to recall-based scoring
+(overlap ÷ number of keywords in the entry) so wordy, casual phrasing is no
+longer penalised. Threshold re-tuned against real matching/non-matching
+examples after the scoring change (0.35, sitting between the highest
+genuine non-match at 0.33 and the lowest genuine match at 0.37).
+
+Two new FAQ entries added (general app troubleshooting, "a result looks
+wrong") — these are deliberately NOT auto-triggered by vague phrasing like
+"my app crashed," since testing showed that pushes the match threshold low
+enough to also let genuinely unrelated queries through. They remain fully
+visible in the "Browse all topics" list instead — an honest trade-off of a
+keyword-based search rather than a true NLU model.
+
+2 new tests (38 total) locking in the casual-phrasing fix and confirming
+genuinely unrelated queries still correctly return no match.
+
 ## v23 — Built-in help search (no AI, no external service)
 
 **New: `core/help_assistant.py`** — a lightweight, dependency-free help

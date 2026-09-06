@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 FAQ: List[Dict[str, str]] = [
     {
         "id": "status-meaning",
-        "keywords": "pass fail warning not checked status mean meaning green red audit",
+        "keywords": "pass fail warning not checked status mean meaning green red audit label explain thing deal understand",
         "question": "What do PASS, FAIL, WARNING and NOT CHECKED mean?",
         "answer": (
             "PASS: this specific check was performed and the member is adequate for it. "
@@ -40,7 +40,7 @@ FAQ: List[Dict[str, str]] = [
     },
     {
         "id": "not-checked-vs-pass",
-        "keywords": "not checked same as pass safe ignore trust",
+        "keywords": "not checked same as pass safe ignore trust okay fine",
         "question": "Is NOT CHECKED the same as PASS? Can I ignore it?",
         "answer": (
             "No. NOT CHECKED means that specific check has not been implemented in this tool yet — "
@@ -156,21 +156,50 @@ FAQ: List[Dict[str, str]] = [
             "A production deployment would normally require a license key."
         ),
     },
+    {
+        "id": "app-error-crash",
+        "keywords": "error crash broken app wont work doesnt work stuck freeze frozen",
+        "question": "The app shows an error, crashed, or seems stuck — what do I do?",
+        "answer": (
+            "Try refreshing the page first — Streamlit apps sometimes need a reload after a long idle period or a "
+            "deployment update. If a specific button or calculation is stuck, try re-entering that module from the "
+            "sidebar rather than the browser back button. If it still fails, note exactly what you clicked and what "
+            "inputs you used, and report it directly — that's the most useful kind of bug report."
+        ),
+    },
+    {
+        "id": "result-looks-wrong",
+        "keywords": "result looks wrong confused dont understand number seems off strange unexpected",
+        "question": "A result looks wrong or confusing, but I'm not sure why.",
+        "answer": (
+            "That's genuinely useful feedback even without a clear cause — please report it with the exact inputs "
+            "you used and what you expected instead. In the meantime, check the 'Design verification' audit table "
+            "under the result and the 'Limitations' note — the explanation is often there, stating exactly what was "
+            "and wasn't checked for that calculation."
+        ),
+    },
 ]
 
 
 def _score(query: str, entry: Dict[str, str]) -> float:
     """Simple, dependency-free relevance score: fuzzy match against the
-    question text plus a keyword-overlap bonus. No ML, just string matching."""
+    question text plus a keyword-overlap bonus. No ML, just string matching.
+
+    The keyword-overlap term uses RECALL (overlap / number of keywords), not
+    overlap / query length — a long, casually-phrased query that still
+    contains the key terms ("what's the deal with this NOT CHECKED thing")
+    would otherwise get diluted by its own filler words and score lower than
+    a short, precisely-phrased one. Recall avoids penalising a query just
+    for being wordy."""
     query_l = query.lower().strip()
     if not query_l:
         return 0.0
     question_score = difflib.SequenceMatcher(None, query_l, entry["question"].lower()).ratio()
     keywords = set(entry["keywords"].split())
-    query_words = set(query_l.replace("?", "").replace(",", "").split())
+    query_words = set(query_l.replace("?", "").replace(",", "").replace("'", "").split())
     overlap = len(keywords & query_words)
-    overlap_score = overlap / max(1, len(query_words))
-    return 0.6 * question_score + 0.4 * overlap_score
+    overlap_score = overlap / max(1, len(keywords))
+    return 0.5 * question_score + 0.5 * overlap_score
 
 
 def _dynamic_entries_from_results(design_results: Dict) -> List[Dict[str, str]]:
@@ -204,7 +233,7 @@ def _dynamic_entries_from_results(design_results: Dict) -> List[Dict[str, str]]:
     return entries
 
 
-def search(query: str, design_results: Optional[Dict] = None, top_k: int = 3, min_score: float = 0.45) -> List[Tuple[float, Dict[str, str]]]:
+def search(query: str, design_results: Optional[Dict] = None, top_k: int = 3, min_score: float = 0.35) -> List[Tuple[float, Dict[str, str]]]:
     """Returns up to top_k (score, entry) pairs ranked by relevance,
     searching both the static FAQ and the engineer's current session
     results, filtered to a minimum relevance threshold so irrelevant
