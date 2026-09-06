@@ -1,5 +1,37 @@
 # Changelog
 
+## v23 — Built-in help search (no AI, no external service)
+
+**New: `core/help_assistant.py`** — a lightweight, dependency-free help
+search using only Python's standard library (`difflib`), explicitly NOT a
+machine learning model or LLM:
+
+- A curated FAQ covering PASS/FAIL/WARNING/NOT CHECKED, the 🔗 linking
+  checkboxes, retry buttons, settings-drift warnings, the drawing importer's
+  "not detected" behavior, DXF troubleshooting, save/load, and what the
+  simplified column moment check means.
+- Also searches the engineer's **own current session results** — every
+  audit message and limitation already produced by the calc engine for
+  whatever they've calculated — so a question about a specific result
+  surfaces the exact text the engine wrote, never an invented answer.
+- A relevance threshold (tuned against real query/non-query examples, not
+  guessed) so an unrelated question returns "no match" honestly instead of
+  a confident-looking wrong guess.
+
+**Hard scope boundary, by design**: this never generates a new engineering
+opinion. Every answer either quotes the tool's own documentation or a
+message the calc engine already produced — it cannot judge whether a
+design is adequate beyond what's already been checked.
+
+**UI**: a new "Help & Troubleshooting" sidebar module with search + browsable
+FAQ + session-specific results; plus a "❓ Ask about this result" box
+directly under every audit table, right where the question naturally comes
+up.
+
+6 new tests (36 total) covering FAQ retrieval accuracy, the irrelevant-query
+rejection threshold, and that dynamic session-result entries surface real
+audit text rather than anything invented.
+
 ## v22 — Real CAD-quality reinforcement detail drawings (DXF export)
 
 **New: `core/dxf_export.py`** generates dimensioned, layered DXF drawings from

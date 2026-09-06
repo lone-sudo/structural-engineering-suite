@@ -72,6 +72,20 @@ def show_audit(audit: dict, title: str = "Design verification"):
         if status in {"NOT CHECKED", "WARNING"}:
             st.caption(message)
 
+    with st.expander("❓ Ask about this result"):
+        st.caption("Type a question about any check above — this searches the tool's own documentation and the exact messages shown here. It never invents a new engineering opinion.")
+        q = st.text_input("Your question", key=f"help_q_{title}", label_visibility="collapsed", placeholder="e.g. why is this NOT CHECKED?")
+        if q:
+            from core.help_assistant import search as help_search
+            hits = help_search(q, design_results=st.session_state.get("design_results"))
+            if hits:
+                for score, entry in hits:
+                    st.markdown(f"**{entry['question']}**")
+                    st.write(entry["answer"])
+                    st.divider()
+            else:
+                st.info("No close match found. Try the full Help & Troubleshooting module in the sidebar, or rephrase your question.")
+
 
 def download_calc_sheet(element_title: str, data: dict, key: str):
     """Standalone printable calc-sheet download for a single design module."""
@@ -192,6 +206,7 @@ st.divider()
 # ==========================================
 modules = [
     "Project Dashboard",
+    "Help & Troubleshooting",
     "CAD / PDF Drawing Importer",
     "Whole Building Automated Design",
     "Beam Design",
@@ -369,6 +384,54 @@ if module == "Project Dashboard":
                 "📄 Download combined project report (HTML)", data=combined,
                 file_name="project_combined_calc_sheet.html", mime="text/html"
             )
+
+# ==========================================
+# 0.5 HELP & TROUBLESHOOTING
+# ==========================================
+elif module == "Help & Troubleshooting":
+    from core.help_assistant import search as help_search, FAQ
+
+    st.subheader("Help & Troubleshooting")
+    st.caption(
+        "This is a plain text search over the tool's own documentation and, if you've calculated anything "
+        "this session, the exact audit messages and limitations already produced for your results. It is "
+        "not an AI model and never generates a new engineering opinion — every answer either quotes this "
+        "tool's own documentation or a message the calculation engine already produced."
+    )
+    query = st.text_input("Type a question about how to use the tool, what a status means, or why a result looks the way it does:", placeholder="e.g. why does my column show NOT CHECKED for slenderness?")
+
+    if query:
+        hits = help_search(query, design_results=st.session_state.get("design_results"))
+        if hits:
+            st.markdown("### Closest matches")
+            for score, entry in hits:
+                with st.container(border=True):
+                    st.markdown(f"**{entry['question']}**")
+                    st.write(entry["answer"])
+        else:
+            st.warning(
+                "No close match found in the documentation or your current results. Try rephrasing, "
+                "or browse the full list of topics below."
+            )
+
+    st.markdown("---")
+    st.markdown("### Browse all topics")
+    for entry in FAQ:
+        with st.expander(entry["question"]):
+            st.write(entry["answer"])
+
+    if st.session_state.get("design_results"):
+        st.markdown("---")
+        st.markdown("### From your current session's results")
+        st.caption("These are the exact NOT CHECKED / WARNING / FAIL messages already shown in your calculated elements, collected here for quick reference.")
+        from core.help_assistant import _dynamic_entries_from_results
+        dyn = _dynamic_entries_from_results(st.session_state.design_results)
+        if dyn:
+            for entry in dyn:
+                with st.expander(entry["question"]):
+                    st.write(entry["answer"])
+        else:
+            st.caption("Nothing calculated yet this session.")
 
 # ==========================================
 # 1. CAD (.DXF) & PDF DRAWING IMPORTER
