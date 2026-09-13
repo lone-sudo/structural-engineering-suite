@@ -1,5 +1,49 @@
 # Changelog
 
+## v27 — Fix deflection basic-ratio bug (found via real RCC94 comparison), add first real benchmark test
+
+A user ran the same panel through both this tool and an actual RCC94.xls
+spreadsheet (BS 8110 Table 3.14 two-way slab) and compared the outputs
+directly. Every design moment matched the reference to within rounding —
+a genuine validation of the coefficient-method implementation — but the
+comparison also surfaced a real bug:
+
+**Fixed: deflection screening basic-ratio classification was wrong for
+most panel types.** The two-way slab deflection check only used BS 8110's
+"continuous" basic ratio (26) when the panel type was literally the string
+"Interior Panel", defaulting to "simply supported" (20) for every other
+panel type — including panels that are genuinely continuous on part of
+their short span, like "Two Adjacent Edges Discontinuous". This made the
+screening check unnecessarily conservative (in the reference case, 34.51
+instead of the correct ~39-41 range) and could produce a false FAIL on a
+marginal slab where the real BS 8110 method would pass. Replaced with a
+proper classification based on which specific edges BS 8110 Table 3.14
+treats as discontinuous for each of the 9 panel types — only the 3 panel
+types where BOTH short-span edges are discontinuous now use the
+simply-supported ratio; the other 6 correctly use the continuous ratio.
+Verified against the real RCC94 output: allowable span/d moved from 34.51
+(12% too conservative) to 40.9 (within ~4% of the reference's 39.21, an
+appropriate level of agreement for a documented "simplified screening"
+check, not a full deflection calculation).
+
+**New: `tests/test_rcc94_benchmark.py`** — the first real benchmark test
+using an actual spreadsheet's output as the expected values, not a
+synthetic hand-calculation. This is the RCC41/51/81/71-style benchmarking
+approach that was on the deferred backlog; this is the first concrete
+instance of it, covering the two-way slab moment coefficients and the
+deflection basic-ratio fix specifically, so this exact bug can never
+silently reappear.
+
+Also corrected an earlier (incorrect) hypothesis from reviewing the same
+comparison: the two-way slab's four flexural checks (Bottom X/Y, Top X/Y)
+showing identical demand/capacity in that example is NOT a missing
+per-zone optimization bug — the engine does check each zone
+independently; they coincidentally all landed on the same governing
+minimum-steel value in that specific case. Confirmed by reading the
+actual code before concluding anything, not assumed.
+
+2 new tests (42 total).
+
 ## v26 — Consolidated engineering-usability batch (from GitLab audit + own review)
 
 Following an independent audit (via a trial of GitLab's AI review tools) that

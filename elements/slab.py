@@ -236,7 +236,22 @@ class TwoWaySlab:
         # This remains a screening span/depth check; no full long-term deflection analysis.
         actual_span_d = self.lx * 1000 / self.dx
         if self.code == "BS8110":
-            basic_ratio = 26.0 if self.panel_type == "Interior Panel" else 20.0
+            # BS 8110 Table 3.9's "continuous" basic ratio (26) applies whenever the
+            # SHORT span (the one this check evaluates, self.dx) is continuous over
+            # at least one support; only a short span that is discontinuous at BOTH
+            # ends is "simply supported" (20). This depends on which specific edges
+            # Table 3.14 treats as discontinuous for each panel type, not merely
+            # whether the panel is literally named "Interior Panel" — the previous
+            # version of this check used 20 for every non-interior panel, which is
+            # unnecessarily conservative for e.g. "Two Adjacent Edges Discontinuous"
+            # (verified against a real RCC94/BS8110 reference calculation: that
+            # panel type correctly uses 26, not 20).
+            _short_span_simply_supported_panels = {
+                "Two Short Edges Discontinuous",
+                "Three Edges Discontinuous (One Long Edge Continuous)",
+                "Four Edges Discontinuous",
+            }
+            basic_ratio = 20.0 if self.panel_type in _short_span_simply_supported_panels else 26.0
             defl = BS8110.deflection_check(1000, self.dx, Msx_pos, sx["As_req"], sx_bar["As_prov"], self.f_y, basic_ratio=basic_ratio)
             deflection_status = "PASS" if actual_span_d <= defl["allowable_span_d"] else "FAIL"
             allowable_span_d = round(defl["allowable_span_d"], 2)
