@@ -69,3 +69,19 @@ def test_pdf_reader_detects_and_flags_explicit_values():
     assert parsed["detected_pad_dim"] == 1200.0
     assert parsed["fcu_detected"] is True
     assert parsed["fcu"] == 30.0
+
+
+def test_pdf_renderer_produces_real_page_images_not_blank():
+    import pymupdf
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "GRID SPANS 4000 5000")
+    pdf_bytes = doc.tobytes()
+
+    images = PDFPlanReader.render_all_pages(pdf_bytes)
+    assert len(images) == 1
+    assert images[0].mode == "RGB"
+    assert images[0].size[0] > 0 and images[0].size[1] > 0
+    # A rendered page with real text should not be a single uniform (blank) image.
+    extrema = images[0].convert("L").getextrema()
+    assert extrema[0] != extrema[1], "rendered page appears blank"

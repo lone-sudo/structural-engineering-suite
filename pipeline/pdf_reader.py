@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pymupdf
 import re
-import pypdfium2 as pdfium
 from PIL import Image
 from typing import Dict, List, Optional
 
@@ -14,15 +13,22 @@ class PDFPlanReader:
     regex text search finds nothing, the field is returned as None rather
     than a fabricated default — the caller must show that explicitly and
     require the engineer to enter it manually.
+
+    Uses PyMuPDF only (text extraction AND page rendering) — a separate
+    pypdfium2 dependency previously handled rendering alone, which was
+    redundant since PyMuPDF's own get_pixmap() does the same job. Neither
+    library performs OCR: a scanned/image-only PDF with no text layer will
+    have nothing to extract regardless of which renderer is used.
     """
 
     @staticmethod
     def render_all_pages(file_bytes: bytes) -> List[Image.Image]:
         """Renders every page of the PDF into PIL images for instant switching."""
-        pdf = pdfium.PdfDocument(file_bytes)
+        doc = pymupdf.open(stream=file_bytes, filetype="pdf")
         images = []
-        for page in pdf:
-            images.append(page.render(scale=2.0).to_pil())
+        for page in doc:
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0))
+            images.append(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
         return images
 
     @staticmethod

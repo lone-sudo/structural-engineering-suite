@@ -72,8 +72,9 @@ class ContinuousBeam:
             span_flex = design_flexure("BS8110", M_u=M_span, b=self.b_w, d=self.d, f_cu=self.f_cu, f_y=self.f_y, min_steel_h=self.h)
             supp_flex = design_flexure("BS8110", M_u=M_support, b=self.b_w, d=self.d, f_cu=self.f_cu, f_y=self.f_y, min_steel_h=self.h) if M_support else {"As_req": 0.0}
         else:
-            # For EC2 the suite uses cylinder strength; fcu input is not silently treated as fck.
-            f_ck = 0.8 * self.f_cu
+            # EC2 sidebar now collects the real cylinder strength (fck) directly —
+            # no cube-to-cylinder approximation is applied.
+            f_ck = self.f_cu
             span_flex = design_flexure("Eurocode 2", M_Ed=M_span, b=self.b_w, d=self.d, f_ck=f_ck, f_yk=self.f_y)
             supp_flex = design_flexure("Eurocode 2", M_Ed=M_support, b=self.b_w, d=self.d, f_ck=f_ck, f_yk=self.f_y) if M_support else {"As_req": 0.0}
 

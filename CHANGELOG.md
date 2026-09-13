@@ -1,5 +1,66 @@
 # Changelog
 
+## v26 — Consolidated engineering-usability batch (from GitLab audit + own review)
+
+Following an independent audit (via a trial of GitLab's AI review tools) that
+correctly identified several real gaps, this batch fixes what was verified
+against the actual code — not everything suggested, and every claim was
+checked before acting on it.
+
+**Bug fixes:**
+- "Clear Clear Calculated..." duplicate text in all 6 modules.
+- Two-way slab load breakdown previously hardcoded finishes display at
+  1.50 kN/m² and subtracted that same hardcoded number from the total,
+  regardless of what the engineer actually entered. Fixed at the source:
+  `TwoWaySlab` now returns real `gk_self_kpa`/`gk_finishes_kpa` fields
+  (mirroring what `OneWaySlab` already did correctly), and the display
+  uses them.
+- Pad footing schematic drawing used a hardcoded 300mm depth that didn't
+  even match the actual (also-hardcoded) 450mm calculation default.
+
+**Real engineering-accuracy fix:** every Eurocode 2 calculation was silently
+converting the sidebar's concrete strength input via `fck = 0.8 × fcu`,
+treating the input as a BS8110-style cube strength. This is only a rough
+approximation — EC2 concrete classes are defined by cylinder strength
+directly. The sidebar now asks for the correct value per code (real EC2
+fck classes: 16–50 MPa, BS8110 fcu classes now extended to include 40, 45,
+50) and the 0.8 conversion was removed from all 7 places it appeared
+(beam, column, footing ×2, slab ×3, stair). One existing test's expected
+value was updated to reflect the corrected (not approximated) behavior.
+
+**New: cover and exposure condition as a global project setting.** Cover
+was previously hardcoded at 25mm everywhere with no way to change it —
+a genuine gap for a real tool, since cover depends on exposure condition
+and getting it wrong is a durability issue. The sidebar now has an
+exposure-condition dropdown (Mild/Moderate/Severe/Very Severe/Extreme)
+with a suggested cover, editable directly. Wired through to Beam, Column,
+Footing, Slab, and Stair construction, and their section visuals/DXF
+exports.
+
+**New: Footing overall depth is now a real input** (previously always a
+silent 450mm default with no UI control).
+
+**Simplified: PDF handling now uses only PyMuPDF**, not two separate PDF
+libraries. `pypdfium2` was only ever used for page-preview rendering;
+PyMuPDF's own `get_pixmap()` does the same job, verified by actually
+rendering a test page and visually confirming it wasn't blank before
+removing the dependency. Neither library performs OCR — this change
+doesn't gain or lose scanned-document support either way, which is worth
+knowing since that was a point of real confusion going in.
+
+2 new tests (40 total): one confirming the PDF renderer produces real,
+non-blank page images after the library swap, and the EC2 axial-resistance
+test updated for the corrected concrete-strength behavior.
+
+**Deferred to a future session** (bigger scope, need dedicated focus):
+unequal-span continuous beam analysis, column effective-length/end-condition
+input, splitting app.py into a multi-page Streamlit app, print-ready CSS
+for browser-to-PDF export, benchmark tests against the real RCC41/51/81/71
+spreadsheets, and wiring the new cover setting into the Whole Building
+Automated Design module specifically (that module's own file wasn't
+touched this round to avoid a rushed, unreviewed change to code not fully
+re-read this session).
+
 ## v25 — Fix column service-load double-counting bug
 
 **Real bug, found from a user report, not a hypothetical.** Column

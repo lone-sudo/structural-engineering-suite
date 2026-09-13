@@ -12,11 +12,14 @@ if "global_settings" not in st.session_state:
         "code": "BS8110",
         "f_cu": 25.0,
         "f_y": 460.0,
+        "cover": 25.0,
+        "exposure": "Mild",
     }
 
 code_choice = st.session_state.global_settings["code"]
 f_cu = st.session_state.global_settings["f_cu"]
 f_y = st.session_state.global_settings["f_y"]
+cover = st.session_state.global_settings.get("cover", 25.0)
 
 # ==========================================
 # 0. SINGLE-USE ACCESS KEY ENFORCEMENT
@@ -186,18 +189,60 @@ def clear_result(key: str, label: str):
 st.title("Integrated Structural Concrete Design Suite")
 
 st.sidebar.header("Global Project Settings")
+
+# BS 8110 Table 3.4 / EC2 Table 4.4N-style typical nominal cover by exposure
+# condition. These are common, representative defaults for a first pass —
+# always confirm the exact figure against the governing code clause and the
+# project's specific exposure classification before construction.
+_EXPOSURE_COVER_MM = {
+    "Mild": 25.0,
+    "Moderate": 35.0,
+    "Severe": 40.0,
+    "Very Severe": 50.0,
+    "Extreme": 60.0,
+}
+_EC2_FCK_CLASSES = [16.0, 20.0, 25.0, 28.0, 30.0, 32.0, 35.0, 40.0, 45.0, 50.0]
+_BS_FCU_CLASSES = [20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0]
+
 with st.sidebar.form("global_settings_form"):
     code_input = st.selectbox("Design Code", ["BS8110", "Eurocode 2"], index=["BS8110", "Eurocode 2"].index(code_choice))
-    fcu_input = st.selectbox("Concrete Cube Strength, fcu (N/mm²)", [20.0, 25.0, 30.0, 35.0], index=[20.0, 25.0, 30.0, 35.0].index(f_cu) if f_cu in [20.0,25.0,30.0,35.0] else 1)
+    if code_input == "Eurocode 2":
+        fcu_input = st.selectbox(
+            "Concrete Cylinder Strength, fck (N/mm²)", _EC2_FCK_CLASSES,
+            index=_EC2_FCK_CLASSES.index(f_cu) if f_cu in _EC2_FCK_CLASSES else _EC2_FCK_CLASSES.index(25.0),
+            help="Enter the real EN 1992-1-1 cylinder strength directly (e.g. 25 for class C25/30) — this is no longer approximated from a cube strength."
+        )
+    else:
+        fcu_input = st.selectbox(
+            "Concrete Cube Strength, fcu (N/mm²)", _BS_FCU_CLASSES,
+            index=_BS_FCU_CLASSES.index(f_cu) if f_cu in _BS_FCU_CLASSES else _BS_FCU_CLASSES.index(25.0)
+        )
     fy_input = st.number_input("Steel Yield Strength, fy (N/mm²)", value=float(f_y), step=10.0)
+
+    st.markdown("**Concrete cover**")
+    exposure_input = st.selectbox(
+        "Exposure condition", list(_EXPOSURE_COVER_MM.keys()),
+        index=list(_EXPOSURE_COVER_MM.keys()).index(st.session_state.global_settings.get("exposure", "Mild")),
+        help="Sets a typical suggested cover for this condition — always confirm against the governing code clause for your specific project."
+    )
+    suggested_cover = _EXPOSURE_COVER_MM[exposure_input]
+    cover_input = st.number_input(
+        "Nominal cover (mm)", min_value=15.0, max_value=100.0,
+        value=float(cover) if cover else suggested_cover, step=5.0,
+        help=f"Suggested for {exposure_input} exposure: {suggested_cover:g}mm. Override if your project's cover requirement differs."
+    )
     apply_settings = st.form_submit_button("Apply Project Settings", type="primary")
 if apply_settings:
-    st.session_state.global_settings.update({"code": code_input, "f_cu": fcu_input, "f_y": fy_input})
+    st.session_state.global_settings.update({
+        "code": code_input, "f_cu": fcu_input, "f_y": fy_input,
+        "cover": cover_input, "exposure": exposure_input,
+    })
     st.rerun()
 
 code_choice = st.session_state.global_settings["code"]
 f_cu = st.session_state.global_settings["f_cu"]
 f_y = st.session_state.global_settings["f_y"]
+cover = st.session_state.global_settings.get("cover", 25.0)
 
 st.divider()
 
@@ -646,7 +691,7 @@ elif module == "Whole Building Automated Design":
     if saved_building is None:
         st.info("Enter or review the project inputs, then click **Calculate Whole Building**.")
         st.stop()
-    clear_result("whole_building", "Clear Clear Calculated Building Result")
+    clear_result("whole_building", "Clear Calculated Building Result")
     full_res = saved_building["full_res"]
     bbs_rows = saved_building["bbs_rows"]
     cost_data = saved_building["cost_data"]
@@ -836,15 +881,15 @@ elif module == "Beam Design":
         run_beam = st.form_submit_button("Calculate Beam", type="primary")
     show_beam_visuals = st.checkbox("Show beam section and force diagrams", value=False)
     if run_beam:
-        beam = ContinuousBeam(spans=[span_len]*num_spans, b_w=bw, h_overall=h_beam, gk_slab=beam_gk, qk_slab=beam_qk, wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
+        beam = ContinuousBeam(spans=[span_len]*num_spans, b_w=bw, h_overall=h_beam, cover=cover, gk_slab=beam_gk, qk_slab=beam_qk, wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
         st.session_state.design_results["beam"] = stamp_settings(beam.design_beam())
-        st.session_state.design_inputs["beam"] = dict(spans=[span_len]*num_spans, b_w=bw, h_overall=h_beam, gk_slab=beam_gk, qk_slab=beam_qk, wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
+        st.session_state.design_inputs["beam"] = dict(spans=[span_len]*num_spans, b_w=bw, h_overall=h_beam, cover=cover, gk_slab=beam_gk, qk_slab=beam_qk, wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
     b_res = st.session_state.design_results.get("beam")
     if b_res is None:
         st.info("Review the beam inputs, then click **Calculate Beam**.")
         st.stop()
 
-    clear_result("beam", "Clear Clear Calculated Beam Result")
+    clear_result("beam", "Clear Calculated Beam Result")
     show_settings_drift_warning(b_res)
     col_data, col_plot = st.columns([1, 1])
     with col_data:
@@ -874,7 +919,7 @@ elif module == "Beam Design":
         if beam_inputs:
             from core.dxf_export import generate_beam_dxf
             dxf_bytes = generate_beam_dxf(
-                b_res, b_w=beam_inputs.get("b_w", bw), h_overall=beam_inputs.get("h_overall", h_beam), cover=25,
+                b_res, b_w=beam_inputs.get("b_w", bw), h_overall=beam_inputs.get("h_overall", h_beam), cover=beam_inputs.get("cover", cover),
                 code=code_choice, project_name=st.session_state.get("project_name", ""), engineer_name=st.session_state.get("engineer_name", "")
             )
             download_dxf("Beam Design", dxf_bytes, "beam")
@@ -885,7 +930,7 @@ elif module == "Beam Design":
             d_bot = b_res['span_bars'].get('dia', 16)
             n_top = b_res['supp_bars'].get('bars', 2)
             d_top = b_res['supp_bars'].get('dia', 16)
-            fig_beam = SectionVisualizer.draw_beam_section(b=bw, h=h_beam, cover=25.0, num_top=n_top, dia_top=d_top, num_bot=n_bot, dia_bot=d_bot)
+            fig_beam = SectionVisualizer.draw_beam_section(b=bw, h=h_beam, cover=beam_inputs.get("cover", cover), num_top=n_top, dia_top=d_top, num_bot=n_bot, dia_bot=d_bot)
             st.plotly_chart(fig_beam, use_container_width=True)
         st.markdown("---")
         st.subheader("Internal Force Diagrams (BMD & SFD)")
@@ -959,9 +1004,9 @@ elif module == "Column Design":
             st.error("Enter a positive beam Gk reaction per supported floor before running the column design.")
             st.stop()
         try:
-            column = ColumnDesign(b=col_b, h=col_h, num_floors=n_floors, Gk_beam_per_floor=gk_to_use, Qk_beam_per_floor=qk_to_use, Mx_applied=mx_applied, My_applied=my_applied, f_cu=f_cu, f_y=f_y, code=code_choice)
+            column = ColumnDesign(b=col_b, h=col_h, num_floors=n_floors, cover=cover, Gk_beam_per_floor=gk_to_use, Qk_beam_per_floor=qk_to_use, Mx_applied=mx_applied, My_applied=my_applied, f_cu=f_cu, f_y=f_y, code=code_choice)
             st.session_state.design_results["column"] = stamp_settings(column.design_column())
-            st.session_state.design_inputs["column"] = dict(b=col_b, h=col_h, num_floors=n_floors, Gk_beam_per_floor=gk_to_use, Qk_beam_per_floor=qk_to_use, Mx_applied=mx_applied, My_applied=my_applied, f_cu=f_cu, f_y=f_y, code=code_choice)
+            st.session_state.design_inputs["column"] = dict(b=col_b, h=col_h, num_floors=n_floors, cover=cover, Gk_beam_per_floor=gk_to_use, Qk_beam_per_floor=qk_to_use, Mx_applied=mx_applied, My_applied=my_applied, f_cu=f_cu, f_y=f_y, code=code_choice)
             st.session_state.project_data["column_dims"] = {"b": col_b, "h": col_h}
         except ValueError as exc:
             st.error(f"Input error: {exc}")
@@ -970,7 +1015,7 @@ elif module == "Column Design":
         st.info("Review the column inputs, then click **Calculate Column**.")
         st.stop()
 
-    clear_result("column", "Clear Clear Calculated Column Result")
+    clear_result("column", "Clear Calculated Column Result")
     show_settings_drift_warning(col_res)
     col_data, col_plot = st.columns([1, 1])
     with col_data:
@@ -1022,7 +1067,7 @@ elif module == "Column Design":
         if col_inputs:
             from core.dxf_export import generate_column_dxf
             dxf_bytes = generate_column_dxf(
-                col_res, b=col_inputs.get("b", col_b), h=col_inputs.get("h", col_h), cover=25,
+                col_res, b=col_inputs.get("b", col_b), h=col_inputs.get("h", col_h), cover=col_inputs.get("cover", cover),
                 code=code_choice, project_name=st.session_state.get("project_name", ""), engineer_name=st.session_state.get("engineer_name", "")
             )
             download_dxf("Column Design", dxf_bytes, "column")
@@ -1030,7 +1075,7 @@ elif module == "Column Design":
         with col_plot:
             n_bars = col_res['main_rebar'].get('bars', 4)
             d_bar = col_res['main_rebar'].get('dia', 16)
-            fig_col = SectionVisualizer.draw_column_section(b=col_b, h=col_h, cover=25.0, num_bars=n_bars, bar_dia=d_bar)
+            fig_col = SectionVisualizer.draw_column_section(b=col_b, h=col_h, cover=col_inputs.get("cover", cover), num_bars=n_bars, bar_dia=d_bar)
             st.plotly_chart(fig_col, use_container_width=True)
 
 # ==========================================
@@ -1074,6 +1119,7 @@ elif module == "Pad Footing Design":
             col_cx_in = st.number_input("Column Width, cx (mm)", value=float(default_col_cx), step=25.0)
         with cc2:
             col_cy_in = st.number_input("Column Depth, cy (mm)", value=float(default_col_cy), step=25.0)
+        h_overall_in = st.number_input("Footing Overall Depth, h (mm)", value=450.0, min_value=200.0, step=25.0, help="Total footing thickness including cover — adjust if the default doesn't suit your soil/load conditions.")
         if use_column_loads:
             st.caption("Axial loads above are locked to the Column Design result. Uncheck the box above to override manually.")
         run_footing = st.form_submit_button("Calculate Footing", type="primary")
@@ -1085,7 +1131,7 @@ elif module == "Pad Footing Design":
             st.error("Ultimate axial load should not be less than service axial load.")
             st.stop()
         try:
-            footing = PadFooting(N_service=n_serv_to_use, N_ultimate=n_u_to_use, col_cx=col_cx_in, col_cy=col_cy_in, q_allowable=qa, f_cu=f_cu, f_y=f_y, code=code_choice)
+            footing = PadFooting(N_service=n_serv_to_use, N_ultimate=n_u_to_use, col_cx=col_cx_in, col_cy=col_cy_in, q_allowable=qa, h_overall=h_overall_in, cover=cover, f_cu=f_cu, f_y=f_y, code=code_choice)
         except ValueError as exc:
             st.error(f"Input error: {exc}")
             st.stop()
@@ -1094,12 +1140,12 @@ elif module == "Pad Footing Design":
         else:
             pad_L, pad_B, _ = footing.size_plan_dimensions()
         st.session_state.design_results["footing"] = stamp_settings({"result": footing.design_reinforcement_and_shear(pad_L, pad_B), "pad_L": pad_L, "pad_B": pad_B, "used_imported_dimensions": bool(override and st.session_state.project_data["has_drawing"])})
-        st.session_state.design_inputs["footing"] = dict(N_service=n_serv_to_use, N_ultimate=n_u_to_use, col_cx=col_cx_in, col_cy=col_cy_in, q_allowable=qa, f_cu=f_cu, f_y=f_y, code=code_choice)
+        st.session_state.design_inputs["footing"] = dict(N_service=n_serv_to_use, N_ultimate=n_u_to_use, col_cx=col_cx_in, col_cy=col_cy_in, q_allowable=qa, h_overall=h_overall_in, cover=cover, f_cu=f_cu, f_y=f_y, code=code_choice)
     saved_footing = st.session_state.design_results.get("footing")
     if saved_footing is None:
         st.info("Review the footing inputs, then click **Calculate Footing**.")
         st.stop()
-    clear_result("footing", "Clear Clear Calculated Footing Result")
+    clear_result("footing", "Clear Calculated Footing Result")
     f_res = saved_footing["result"]
     show_settings_drift_warning(saved_footing)
     pad_L, pad_B = saved_footing["pad_L"], saved_footing["pad_B"]
@@ -1140,7 +1186,10 @@ elif module == "Pad Footing Design":
             download_dxf("Pad Footing Design", dxf_bytes, "footing")
     if show_footing_visuals:
         with col_plot:
-            fig_foot = SectionVisualizer.draw_footing_elevation(pad_L_m=pad_L, pad_h_mm=300.0, col_dim_mm=200.0)
+            fig_foot = SectionVisualizer.draw_footing_elevation(
+                pad_L_m=pad_L, pad_h_mm=f_res.get("h_overall_mm", 450.0),
+                col_dim_mm=footing_inputs.get("col_cx", 200.0), cover_mm=footing_inputs.get("cover", 50.0)
+            )
             st.plotly_chart(fig_foot, use_container_width=True)
 
 # ==========================================
@@ -1172,12 +1221,12 @@ elif module == "Slab Design":
     if run_slab:
         try:
             if slab_mode == "Two-way slab":
-                slab = TwoWaySlab(lx=lx, ly=ly, h_slab=h_slab, gk_finishes=slab_gk, qk_live=slab_qk, f_cu=f_cu, f_y=f_y, panel_type=panel_type, code=code_choice)
+                slab = TwoWaySlab(lx=lx, ly=ly, h_slab=h_slab, cover=cover, gk_finishes=slab_gk, qk_live=slab_qk, f_cu=f_cu, f_y=f_y, panel_type=panel_type, code=code_choice)
                 result = slab.design_panel()
             else:
                 if lx <= 0:
                     raise ValueError("One-way slab span must be greater than 0 m.")
-                slab = OneWaySlab(span=lx, h_slab=h_slab, gk_finishes=slab_gk, qk_live=slab_qk, f_cu=f_cu, f_y=f_y, code=code_choice)
+                slab = OneWaySlab(span=lx, h_slab=h_slab, cover=cover, gk_finishes=slab_gk, qk_live=slab_qk, f_cu=f_cu, f_y=f_y, code=code_choice)
                 result = slab.design()
             st.session_state.design_results["slab"] = stamp_settings({"result": result, "panel_type": panel_type, "mode": slab_mode})
         except ValueError as exc:
@@ -1186,7 +1235,7 @@ elif module == "Slab Design":
     if saved_slab is None:
         st.info("Review the slab inputs, then click **Calculate Slab**.")
         st.stop()
-    clear_result("slab", "Clear Clear Calculated Slab Result")
+    clear_result("slab", "Clear Calculated Slab Result")
     res = saved_slab["result"]
     show_settings_drift_warning(saved_slab)
     panel_type = saved_slab["panel_type"]
@@ -1195,7 +1244,7 @@ elif module == "Slab Design":
     st.caption(f"Analysis: {res['analysis_method']} — {panel_type}")
     st.markdown("### Load breakdown")
     if mode == "Two-way slab":
-        st.write(f"Self-weight: **{res['gk_slab_kpa'] - 1.5:.2f} kN/m²**  ·  Finishes/partitions: **1.50 kN/m²**  ·  Total Gk: **{res['gk_slab_kpa']:.2f} kN/m²**  ·  Qk: **{res['qk_slab_kpa']:.2f} kN/m²**")
+        st.write(f"Self-weight: **{res['gk_self_kpa']:.2f} kN/m²**  ·  Finishes/partitions: **{res['gk_finishes_kpa']:.2f} kN/m²**  ·  Total Gk: **{res['gk_slab_kpa']:.2f} kN/m²**  ·  Qk: **{res['qk_slab_kpa']:.2f} kN/m²**")
         st.markdown("### Design moments")
         mc1, mc2 = st.columns(2)
         mc1.metric("Positive Mx", f"{res['Msx_pos']} kNm/m")
@@ -1258,13 +1307,13 @@ elif module == "Stair Design":
             stair_qk = st.number_input("Imposed Qk (kN/m²)", value=3.0, min_value=0.0, step=0.5)
         run_stair = st.form_submit_button("Calculate Stair", type="primary")
     if run_stair:
-        stair = StairFlight(going=going, rise=rise, waist=waist, flight_going_len=flight_len, landing_len=landing_len, gk_finishes=stair_gk, qk_live=stair_qk, f_cu=f_cu, f_y=f_y, code=code_choice)
+        stair = StairFlight(going=going, rise=rise, waist=waist, flight_going_len=flight_len, landing_len=landing_len, cover=cover, gk_finishes=stair_gk, qk_live=stair_qk, f_cu=f_cu, f_y=f_y, code=code_choice)
         st.session_state.design_results["stair"] = stamp_settings(stair.design_stair())
     s_res = st.session_state.design_results.get("stair")
     if s_res is None:
         st.info("Review the stair inputs, then click **Calculate Stair**.")
         st.stop()
-    clear_result("stair", "Clear Clear Calculated Stair Result")
+    clear_result("stair", "Clear Calculated Stair Result")
     show_settings_drift_warning(s_res)
     st.metric("Design Moment (Mu)", f"{s_res['M_u_kNm']} kNm/m")
     st.success(f"**Main Tension Rebar:** {s_res['main_rebar']['description']}")

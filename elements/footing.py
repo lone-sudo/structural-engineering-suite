@@ -42,7 +42,8 @@ class PadFooting:
         return L, B, q_service
 
     def _ec2_shear_capacity(self, As_prov_per_m: float, d_mm: float) -> float:
-        fck = 0.8 * self.f_cu
+        # Sidebar collects the real cylinder strength (fck) directly for EC2.
+        fck = self.f_cu
         gamma_c = 1.5
         k = min(2.0, 1 + math.sqrt(200 / d_mm))
         rho = min(0.02, As_prov_per_m / (1000 * d_mm))
@@ -70,7 +71,7 @@ class PadFooting:
             flex = BS8110.design_flexure(M_per_m, 1000, self.d, self.f_cu, self.f_y, min_steel_h=self.h)
         else:
             flex = Eurocode2.design_flexure(
-                M_per_m, 1000, self.d, 0.8 * self.f_cu, self.f_y
+                M_per_m, 1000, self.d, self.f_cu, self.f_y
             )
         rebar = RebarSelector.select_slab_spacing(flex["As_req"], self.main_bar_dia, max_spacing=300)
 
@@ -137,6 +138,7 @@ class PadFooting:
             "v_punch_Nmm2": round(v_punch, 4),
             "punching_perimeter_m": round(u1, 3),
             "d_eff_mm": self.d,
+            "h_overall_mm": round(self.h, 1),
             "audit": audit.as_dict(),
             "limitations": [
                 "No overturning, sliding, eccentric-load, settlement or soil-structure interaction check.",

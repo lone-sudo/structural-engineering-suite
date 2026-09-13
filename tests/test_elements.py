@@ -135,9 +135,12 @@ def test_ec2_column_axial_resistance_is_reported():
         f_cu=25, f_y=460, code="Eurocode 2"
     )
     r = c.design_column()
-    # fck = 0.8*fcu = 20 MPa; fcd = 0.85*20/1.5; fyd = 460/1.15.
-    # The selected 4Y12 arrangement provides about 452.4 mm².
-    expected_nrd = (300 * 300 * (0.85 * 20 / 1.5) + 452.4 * (460 / 1.15)) / 1000
+    # The sidebar/constructor now collects the real EC2 cylinder strength
+    # (fck) directly — f_cu=25 here means fck=25 MPa, not a cube strength
+    # requiring a 0.8 conversion (that approximation was removed).
+    # fcd = 0.85*25/1.5; fyd = 460/1.15. The selected 4Y12 arrangement
+    # provides about 452.4 mm².
+    expected_nrd = (300 * 300 * (0.85 * 25 / 1.5) + 452.4 * (460 / 1.15)) / 1000
     assert abs(r["N_rd_kN"] - expected_nrd) < 0.2
     assert r["axial_resistance_status"] == "PASS"
     assert r["N_ult_total_kN"] == 227.5

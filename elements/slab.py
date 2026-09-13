@@ -40,7 +40,7 @@ class OneWaySlab:
         if self.code == "BS8110":
             flex = BS8110.design_flexure(M, 1000, self.d, self.f_cu, self.f_y, min_steel_h=self.h)
         else:
-            flex = Eurocode2.design_flexure(M, 1000, self.d, 0.8 * self.f_cu, self.f_y)
+            flex = Eurocode2.design_flexure(M, 1000, self.d, self.f_cu, self.f_y)  # EC2 sidebar collects fck directly
         rebar = RebarSelector.select_slab_spacing(flex["As_req"], 10, max_spacing=250)
         audit = DesignAudit()
         audit.add("Flexural reinforcement", CheckStatus.PASS if rebar["As_prov"] >= flex["As_req"] else CheckStatus.FAIL, demand=flex["As_req"], capacity=rebar["As_prov"], unit="mm²/m")
@@ -52,7 +52,7 @@ class OneWaySlab:
             audit.add("Shear (unreinforced slab screening)", shear_status, demand=round(v_stress, 4), capacity=round(vc, 4), unit="N/mm²",
                       message="Solid slabs are not normally provided with shear reinforcement; increase depth if this fails.")
         else:
-            f_ck = 0.8 * self.f_cu
+            f_ck = self.f_cu  # EC2 sidebar collects fck directly
             vc = Eurocode2.concrete_shear_capacity(1000, self.d, f_ck, rebar["As_prov"])
             shear_status = CheckStatus.PASS if v_stress <= vc else CheckStatus.FAIL
             audit.add("Shear (unreinforced slab screening)", shear_status, demand=round(v_stress, 4), capacity=round(vc, 4), unit="N/mm²",
@@ -204,7 +204,7 @@ class TwoWaySlab:
     def _flexure(self, M, d):
         if self.code == "BS8110":
             return design_flexure("BS8110", M_u=M, b=1000, d=d, f_cu=self.f_cu, f_y=self.f_y, min_steel_h=self.h)
-        return design_flexure("Eurocode 2", M_Ed=M, b=1000, d=d, f_ck=0.8 * self.f_cu, f_yk=self.f_y)
+        return design_flexure("Eurocode 2", M_Ed=M, b=1000, d=d, f_ck=self.f_cu, f_yk=self.f_y)  # EC2 sidebar collects fck directly
 
     def design_panel(self) -> Dict:
         axn, axp, ayn, ayp = self._interpolate_coeffs()
@@ -264,6 +264,8 @@ class TwoWaySlab:
                 else "EC2 two-way slab coefficient method (IStructE Table 8.8 / legacy EC2 manual)"
             ),
             "gk_slab_kpa": round(self.gk_total, 3),
+            "gk_self_kpa": round(self.gk_self, 3),
+            "gk_finishes_kpa": round(self.gk_fin, 3),
             "qk_slab_kpa": round(self.qk, 3),
             "n_ult_kpa": round(self.n_ult, 3),
             "ratio": round(self.ratio, 3),

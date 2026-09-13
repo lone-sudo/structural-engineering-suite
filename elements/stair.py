@@ -78,7 +78,7 @@ class StairFlight:
         if self.code == "BS8110":
             flex_res = design_flexure("BS8110", M_u=M_u, b=1000, d=self.d, f_cu=self.f_cu, f_y=self.f_y)
         else:
-            flex_res = design_flexure("Eurocode 2", M_Ed=M_u, b=1000, d=self.d, f_ck=0.8*self.f_cu, f_yk=self.f_y)
+            flex_res = design_flexure("Eurocode 2", M_Ed=M_u, b=1000, d=self.d, f_ck=self.f_cu, f_yk=self.f_y)  # EC2 sidebar collects fck directly
         main_rebar = RebarSelector.select_slab_spacing(flex_res["As_req"], bar_dia=self.bar_dia)
 
         # Transverse distribution rebar (0.13% minimum steel)

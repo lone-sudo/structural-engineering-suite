@@ -124,9 +124,10 @@ class ColumnDesign:
             steel_design_strength = 0.75 * self.f_y
         else:
             # EN 1992-1-1 column minimum reinforcement: As,min =
-            # max(0.10 NEd/fyd, 0.002 Ac). The current application converts
-            # the supplied cube strength to fck = 0.8 fcu.
-            f_ck = 0.8 * self.f_cu
+            # max(0.10 NEd/fyd, 0.002 Ac). The sidebar now collects the real
+            # cylinder strength (fck) directly for Eurocode 2 — no cube-to-
+            # cylinder approximation is applied.
+            f_ck = self.f_cu
             if f_ck > 50:
                 raise ValueError(
                     "This preliminary column routine currently supports fck <= 50 MPa."
