@@ -14,13 +14,35 @@ def test_slab_keeps_gk_and_qk_separate():
     assert r["w_beam_long_qk_kN_m"] > 0
 
 
-def test_beam_equal_span_requirement():
-    try:
-        ContinuousBeam([4, 5])
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("Unequal spans must not be silently replaced by max(span).")
+def test_beam_now_supports_genuinely_unequal_spans():
+    # This restriction was intentionally removed: the beam engine now uses
+    # a real matrix analysis (core/beam_analysis.py) instead of an
+    # equal-spans-only coefficient table. Unequal spans must be accepted
+    # and produce genuinely different moments per span, not identical
+    # values silently copied from a single representative span.
+    b = ContinuousBeam([4.0, 6.0, 5.0], gk_slab=10, qk_slab=5, code="BS8110")
+    r = b.design_beam()
+    assert r["num_spans"] == 3
+    lengths = [s["length_m"] for s in r["spans_detail"]]
+    assert lengths == [4.0, 6.0, 5.0]
+    moments = [s["M_span_kNm"] for s in r["spans_detail"]]
+    assert len(set(moments)) == 3, "unequal spans must produce distinct span moments, not a copied value"
+
+
+def test_beam_supports_independent_depth_and_width_per_span():
+    b = ContinuousBeam([5.0, 5.0], b_w=[200.0, 300.0], h_overall=[400.0, 600.0], gk_slab=10, qk_slab=5, code="BS8110")
+    r = b.design_beam()
+    depths = [s["h_overall"] for s in r["spans_detail"]]
+    widths = [s["b_w"] for s in r["spans_detail"]]
+    assert depths == [400.0, 600.0]
+    assert widths == [200.0, 300.0]
+
+
+def test_beam_span_count_is_not_capped_at_three():
+    b = ContinuousBeam([4.0] * 6, gk_slab=10, qk_slab=5, code="BS8110")
+    r = b.design_beam()
+    assert r["num_spans"] == 6
+    assert len(r["spans_detail"]) == 6
 
 
 def test_ec2_beam_shear_is_now_designed():
@@ -203,7 +225,8 @@ def test_two_span_beam_uses_exact_equal_span_reaction():
     w = r["w_ult_kN_m"]
     assert abs(r["M_support_kNm"] - w * 25 / 8) < 1e-6
     assert abs(r["V_support_kN"] - 5 * w * 5 / 8) < 1e-6
-    assert abs(r["reaction_gk_to_column_kN"] - 1.25 * b.gk_total * 5) < 1e-6
+    gk_total = r["spans_detail"][0]["gk_total_kN_m"]
+    assert abs(r["reaction_gk_to_column_kN"] - 1.25 * gk_total * 5) < 1e-6
 
 
 def test_two_way_slab_edge_condition_changes_moments():

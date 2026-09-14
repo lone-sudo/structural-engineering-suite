@@ -1,5 +1,69 @@
 # Changelog
 
+## v28 — Real multi-span beam analysis: unequal lengths, independent depths, uncapped span count
+
+Direct response to engineer feedback: the beam module previously **rejected**
+unequal spans outright, used one single depth/width for the entire beam,
+and the UI hard-capped span count at 3 via a `[1, 2, 3]` dropdown. This was
+the single biggest reason the tool felt less capable than the Excel sheets
+it's meant to replace.
+
+**New engine (`core/beam_analysis.py`, built on a solver that already
+existed in the repo from earlier exploratory work but was never wired into
+the actual beam module):** a real matrix (slope-deflection) structural
+analysis, not a coefficient lookup table. Verified against independently-
+checkable textbook results before anything was built on top of it — single
+span reduces exactly to wL²/8, two equal spans to the classic wL²/8 support
+moment and 9wL²/128 span moment, three equal spans to the classic wL²/10
+interior support moment, and unequal-span cases satisfy moment equilibrium
+at every shared support.
+
+**Added: BS 8110/EC2-style pattern loading.** Loading every span
+simultaneously understates the true maximum span moment under live load —
+verified directly: the same beam's governing span moment came out ~15%
+higher under proper alternate-span pattern loading than under a naive
+"load everything at once" analysis. This is now run as the standard set of
+load cases (all-loaded, alternating, adjacent-pair) with the worst case
+taken as the design envelope, so nothing is silently unconservative.
+
+**`ContinuousBeam` now accepts independent length, width, AND depth per
+span** (pass a list for any of these, or a single number to apply
+uniformly). Span count is no longer capped — tested up to 6+ spans.
+
+**New Beam Design UI**: an editable per-span table (`st.data_editor`) —
+add or remove spans freely, set each one's own length/width/depth/loads,
+much closer to the spreadsheet-like editing freedom engineers actually
+want. Results show a full per-span breakdown table (moments, reinforcement,
+shear, deflection status for every span) alongside the existing governing-
+span summary that the DXF export and calc sheet already depend on.
+
+**Verified with real runtime testing, not just unit tests**: used
+Streamlit's `AppTest` framework to actually navigate to Beam Design, click
+Calculate with real per-span data, and confirm the full pipeline — results
+display, per-span table, audit, DXF download — runs with zero exceptions.
+Also fixed an unrelated pre-existing bug found along the way: the beam
+section visualizer was reading `.get('bars')`/`.get('dia')` when the real
+keys are `bar_count`/`bar_diameter`, so it was always silently drawing a
+placeholder 2Y16 regardless of what was actually selected.
+
+9 new/updated tests (51 total): 2 new tests in `test_beam_analysis.py`
+covering pattern loading specifically (including a safety-critical
+regression test that the envelope must never be lower than the naive
+all-loaded case), and 3 new tests in `test_elements.py` covering genuinely
+unequal spans, independent per-span width/depth, and uncapped span count.
+
+**Explicitly deferred, clearly scoped for next steps** (this session
+focused on doing the span/length/depth engineering correctly rather than
+spreading across everything at once):
+- Cantilever/fixed-end support conditions — both beam ends are still
+  assumed simply supported.
+- T-beam / L-beam (flanged section) design — only rectangular sections
+  are supported.
+- Point loads — only uniformly distributed load is modelled.
+- Manual reinforcement/spacing override with live re-validation (the
+  "Excel-style freedom with guardrails" feature discussed alongside the
+  RCC94 comparison).
+
 ## v27 — Fix deflection basic-ratio bug (found via real RCC94 comparison), add first real benchmark test
 
 A user ran the same panel through both this tool and an actual RCC94.xls

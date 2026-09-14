@@ -857,43 +857,81 @@ elif module == "Beam Design":
     from elements.beam import ContinuousBeam
     from core.visualizer import SectionVisualizer
     from core.diagrams import DiagramPlotter
+    import pandas as pd
+
     st.subheader("Continuous Beam Design (Benchmarked against RCC41.xls)")
-    with st.form("beam_inputs"):
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            span_len = st.number_input("Span Length (m)", value=float(st.session_state.project_data["span_y"]), step=0.25)
-        with c2:
-            bw = st.number_input("Web Width, bw (mm)", value=200.0, step=25.0)
-        with c3:
-            h_beam = st.number_input("Overall Depth, h (mm)", value=450.0, step=25.0)
-        with c4:
-            num_spans = st.selectbox("Number of Spans", [1, 2, 3], index=1)
-        bl1, bl2, bl3, bl4 = st.columns(4)
+    st.caption(
+        "Each span below can have its own length, width, depth, and loading — edit the table freely, "
+        "add or remove rows for however many spans your beam actually has. The analysis is a real matrix "
+        "(slope-deflection) solution with pattern loading across spans, not a lookup table limited to equal spans."
+    )
+
+    if "beam_span_table" not in st.session_state:
+        st.session_state.beam_span_table = pd.DataFrame([
+            {"Length (m)": float(st.session_state.project_data["span_y"]), "Width bw (mm)": 200.0, "Depth h (mm)": 450.0,
+             "Other Dead Gk (kN/m)": 12.0, "Imposed Qk (kN/m)": 6.0},
+            {"Length (m)": float(st.session_state.project_data["span_y"]), "Width bw (mm)": 200.0, "Depth h (mm)": 450.0,
+             "Other Dead Gk (kN/m)": 12.0, "Imposed Qk (kN/m)": 6.0},
+        ])
+
+    span_table = st.data_editor(
+        st.session_state.beam_span_table, num_rows="dynamic", use_container_width=True,
+        key="beam_span_editor",
+        column_config={
+            "Length (m)": st.column_config.NumberColumn(min_value=0.5, max_value=30.0, step=0.25, required=True),
+            "Width bw (mm)": st.column_config.NumberColumn(min_value=100.0, max_value=1000.0, step=25.0, required=True),
+            "Depth h (mm)": st.column_config.NumberColumn(min_value=150.0, max_value=2000.0, step=25.0, required=True),
+            "Other Dead Gk (kN/m)": st.column_config.NumberColumn(min_value=0.0, step=1.0, required=True),
+            "Imposed Qk (kN/m)": st.column_config.NumberColumn(min_value=0.0, step=1.0, required=True),
+        },
+    )
+    st.session_state.beam_span_table = span_table
+
+    with st.form("beam_wall_inputs"):
+        st.caption("Wall load (applied uniformly to every span, if present):")
+        bl1, bl2, bl3 = st.columns(3)
         with bl1:
-            beam_gk = st.number_input("Other Dead Load Gk (kN/m)", value=12.0, min_value=0.0, step=1.0)
-        with bl2:
-            beam_qk = st.number_input("Imposed Load Qk (kN/m)", value=6.0, min_value=0.0, step=1.0)
-        with bl3:
             wall_h = st.number_input("Wall Height (m)", value=2.8, min_value=0.0, step=0.1)
-        with bl4:
+        with bl2:
             wall_t = st.number_input("Wall Thickness (m)", value=0.20, min_value=0.0, step=0.01)
-        wall_uw = st.number_input("Wall Unit Weight (kN/m³)", value=18.0, min_value=0.0, step=1.0)
+        with bl3:
+            wall_uw = st.number_input("Wall Unit Weight (kN/m³)", value=18.0, min_value=0.0, step=1.0)
         run_beam = st.form_submit_button("Calculate Beam", type="primary")
     show_beam_visuals = st.checkbox("Show beam section and force diagrams", value=False)
+
     if run_beam:
-        beam = ContinuousBeam(spans=[span_len]*num_spans, b_w=bw, h_overall=h_beam, cover=cover, gk_slab=beam_gk, qk_slab=beam_qk, wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
-        st.session_state.design_results["beam"] = stamp_settings(beam.design_beam())
-        st.session_state.design_inputs["beam"] = dict(spans=[span_len]*num_spans, b_w=bw, h_overall=h_beam, cover=cover, gk_slab=beam_gk, qk_slab=beam_qk, wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
+        table = span_table.dropna()
+        if len(table) == 0:
+            st.error("Add at least one span row before calculating.")
+            st.stop()
+        lengths = table["Length (m)"].tolist()
+        widths = table["Width bw (mm)"].tolist()
+        depths = table["Depth h (mm)"].tolist()
+        gks = table["Other Dead Gk (kN/m)"].tolist()
+        qks = table["Imposed Qk (kN/m)"].tolist()
+        try:
+            beam = ContinuousBeam(spans=lengths, b_w=widths, h_overall=depths, cover=cover, gk_slab=gks, qk_slab=qks,
+                                   wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
+            st.session_state.design_results["beam"] = stamp_settings(beam.design_beam())
+            st.session_state.design_inputs["beam"] = dict(spans=lengths, b_w=widths, h_overall=depths, cover=cover, gk_slab=gks, qk_slab=qks,
+                                                           wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
+        except ValueError as exc:
+            st.error(f"Input error: {exc}")
+            st.stop()
+
     b_res = st.session_state.design_results.get("beam")
     if b_res is None:
-        st.info("Review the beam inputs, then click **Calculate Beam**.")
+        st.info("Review the span table above, then click **Calculate Beam**.")
         st.stop()
 
     clear_result("beam", "Clear Calculated Beam Result")
     show_settings_drift_warning(b_res)
+    beam_inputs = st.session_state.design_inputs.get("beam", {})
+
+    st.markdown(f"#### Governing span (largest reinforcement demand, of {b_res['num_spans']})")
     col_data, col_plot = st.columns([1, 1])
     with col_data:
-        st.metric("Total Ultimate Load (w)", f"{b_res['w_ult_kN_m']} kN/m")
+        st.metric("Total Ultimate Load (w), governing span", f"{b_res['w_ult_kN_m']} kN/m")
         st.metric("Span Moment (M_span)", f"{b_res['M_span_kNm']} kNm")
         st.metric("Support Moment (M_supp)", f"{b_res['M_support_kNm']} kNm")
         st.success(f"**Bottom Steel (Span):** {b_res['span_bars']['description']}")
@@ -905,37 +943,55 @@ elif module == "Beam Design":
                 st.success(f"**Deflection screening: PASS** — {span_d_msg}")
             else:
                 st.error(f"**Deflection screening: FAIL** — {span_d_msg} (increase depth or reduce span)")
-                st.caption(f"💡 Try increasing overall depth h above {h_beam:g}mm, or splitting the span with an intermediate support.")
-                if st.button("🔁 Retry with depth +50mm", key="retry_beam_depth"):
+                st.caption("💡 Try increasing the governing span's depth, or splitting it with an intermediate support.")
+                if st.button("🔁 Retry with governing span depth +50mm", key="retry_beam_depth"):
                     saved_inputs = dict(st.session_state.design_inputs.get("beam", {}))
-                    saved_inputs["h_overall"] = saved_inputs.get("h_overall", h_beam) + 50.0
+                    # Bump every span's depth by 50mm — simplest safe retry that always helps the governing span too.
+                    h_list = list(saved_inputs.get("h_overall", [450.0]))
+                    saved_inputs["h_overall"] = [h + 50.0 for h in h_list]
                     retry_beam = ContinuousBeam(**saved_inputs)
                     st.session_state.design_results["beam"] = stamp_settings(retry_beam.design_beam())
                     st.session_state.design_inputs["beam"] = saved_inputs
                     st.rerun()
+
+        st.markdown("#### Per-span breakdown")
+        detail_rows = [{
+            "Span": s["span_index"] + 1, "Length (m)": s["length_m"], "b×h (mm)": f"{s['b_w']:.0f}×{s['h_overall']:.0f}",
+            "M span (kNm)": s["M_span_kNm"], "M support (kNm)": s["M_support_kNm"],
+            "Bottom steel": s["span_bars"]["description"], "Top steel": s["supp_bars"]["description"],
+            "Links": s["link_schedule"], "Shear": s["shear_status"], "Deflection": s["deflection_status"],
+        } for s in b_res["spans_detail"]]
+        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+
         show_audit(b_res.get("audit", {}), "Beam verification")
         download_calc_sheet("Beam Design", b_res, "beam")
-        beam_inputs = st.session_state.design_inputs.get("beam", {})
         if beam_inputs:
             from core.dxf_export import generate_beam_dxf
+            gov = max(b_res["spans_detail"], key=lambda s: s["span_bars"]["As_prov"] + s["supp_bars"]["As_prov"])
             dxf_bytes = generate_beam_dxf(
-                b_res, b_w=beam_inputs.get("b_w", bw), h_overall=beam_inputs.get("h_overall", h_beam), cover=beam_inputs.get("cover", cover),
+                b_res, b_w=gov["b_w"], h_overall=gov["h_overall"], cover=beam_inputs.get("cover", cover),
                 code=code_choice, project_name=st.session_state.get("project_name", ""), engineer_name=st.session_state.get("engineer_name", "")
             )
             download_dxf("Beam Design", dxf_bytes, "beam")
+            st.caption("The downloaded drawing shows the governing span's section — see the per-span table above for every span's own dimensions and reinforcement.")
 
     if show_beam_visuals:
+        gov = max(b_res["spans_detail"], key=lambda s: s["span_bars"]["As_prov"] + s["supp_bars"]["As_prov"])
         with col_plot:
-            n_bot = b_res['span_bars'].get('bars', 2)
-            d_bot = b_res['span_bars'].get('dia', 16)
-            n_top = b_res['supp_bars'].get('bars', 2)
-            d_top = b_res['supp_bars'].get('dia', 16)
-            fig_beam = SectionVisualizer.draw_beam_section(b=bw, h=h_beam, cover=beam_inputs.get("cover", cover), num_top=n_top, dia_top=d_top, num_bot=n_bot, dia_bot=d_bot)
+            n_bot = gov['span_bars'].get('bar_count', 2)
+            d_bot = gov['span_bars'].get('bar_diameter', 16)
+            n_top = gov['supp_bars'].get('bar_count', 2)
+            d_top = gov['supp_bars'].get('bar_diameter', 16)
+            fig_beam = SectionVisualizer.draw_beam_section(b=gov["b_w"], h=gov["h_overall"], cover=beam_inputs.get("cover", cover), num_top=n_top, dia_top=d_top, num_bot=n_bot, dia_bot=d_bot)
             st.plotly_chart(fig_beam, use_container_width=True)
         st.markdown("---")
         st.subheader("Internal Force Diagrams (BMD & SFD)")
-        fig_analysis = DiagramPlotter.plot_beam_bmd_sfd(span_m=span_len, w_ult_kN_m=b_res["w_ult_kN_m"], num_spans=num_spans)
-        st.plotly_chart(fig_analysis, use_container_width=True)
+        lengths_used = [s["length_m"] for s in b_res["spans_detail"]]
+        if len(set(lengths_used)) == 1:
+            fig_analysis = DiagramPlotter.plot_beam_bmd_sfd(span_m=lengths_used[0], w_ult_kN_m=b_res["w_ult_kN_m"], num_spans=b_res["num_spans"])
+            st.plotly_chart(fig_analysis, use_container_width=True)
+        else:
+            st.info("This illustrative BMD/SFD diagram currently only renders for equal-span beams. Your spans differ — use the per-span moment/shear values in the table above, which come from the real analysis, for design.")
 
 # ==========================================
 # 4. COLUMN TAKEDOWN & DESIGN (RCC51)
