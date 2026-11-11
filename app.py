@@ -266,6 +266,7 @@ modules = [
     "Help & Troubleshooting",
     "CAD / PDF Drawing Importer",
     "Whole Building Automated Design",
+    "Frame Analysis (Phase 2)",
     "Beam Design",
     "Column Design",
     "Pad Footing Design",
@@ -867,6 +868,143 @@ elif module == "Whole Building Automated Design":
 
         if st.button("🧊 Open interactive 3D preview"):
             _show_3d_preview()
+
+# ==========================================
+# 2.5 FRAME ANALYSIS (PHASE 2)
+# ==========================================
+elif module == "Frame Analysis (Phase 2)":
+    import pandas as pd
+    from dataclasses import asdict
+    from pipeline.frame import FrameBuilding
+
+    st.subheader("3-D Frame Analysis — Gravity + Wind Screening")
+    st.caption(
+        "Linear-elastic 3-D frame built from the structural grid above. Columns and beams are "
+        "rigid-jointed, bases are fixed, slab loads are distributed by tributary width, and wind "
+        "is applied as equivalent nodal floor loads. This is a screening model, not a full "
+        "seismic/soil-structure/non-linear analysis."
+    )
+
+    geom = st.session_state.project_data.get("geometry", {})
+    if not geom.get("columns"):
+        st.error("Define at least one column in the Whole Building geometry first.")
+        st.stop()
+
+    with st.form("frame_inputs"):
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            frame_storeys = st.number_input("Frame storeys", 1, 20, 3, 1)
+        with c2:
+            frame_height = st.number_input("Storey height (m)", 2.5, 6.0, 3.0, 0.1)
+        with c3:
+            frame_slab_gk = st.number_input("Slab Gk (kN/m²)", 0.0, 20.0, 4.5, 0.25)
+        with c4:
+            frame_slab_qk = st.number_input("Slab Qk (kN/m²)", 0.0, 20.0, 2.0, 0.25)
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            frame_beam_b = st.number_input("Beam width (mm)", 150.0, 800.0, 250.0, 25.0)
+        with s2:
+            frame_beam_h = st.number_input("Beam depth (mm)", 250.0, 1500.0, 500.0, 25.0)
+        with s3:
+            frame_col_b = st.number_input("Column width (mm)", 200.0, 1200.0, 300.0, 25.0)
+        with s4:
+            frame_col_h = st.number_input("Column depth (mm)", 200.0, 1200.0, 300.0, 25.0)
+        w1, w2, w3, w4 = st.columns(4)
+        with w1:
+            frame_wind = st.number_input("Basic wind velocity (m/s)", 15.0, 60.0, 30.0, 1.0)
+        with w2:
+            frame_terrain = st.selectbox("Terrain", ["suburban", "open", "urban"], index=0)
+        with w3:
+            frame_wall = st.number_input("Wall load on beams (kN/m)", 0.0, 50.0, 0.0, 1.0)
+        with w4:
+            drift_choice = st.selectbox("Drift limit", ["H/300", "H/400", "H/500"], index=1)
+        run_frame = st.form_submit_button("Run Frame Analysis", type="primary")
+
+    drift_limit = {"H/300": 1 / 300, "H/400": 1 / 400, "H/500": 1 / 500}[drift_choice]
+    if run_frame:
+        try:
+            fb = FrameBuilding(
+                geom["x_spacings"], geom["y_spacings"], geom["columns"],
+                num_storeys=int(frame_storeys), storey_height_m=frame_height,
+                slab_gk_kpa=frame_slab_gk, slab_qk_kpa=frame_slab_qk,
+                beam_b_mm=frame_beam_b, beam_h_mm=frame_beam_h,
+                col_b_mm=frame_col_b, col_h_mm=frame_col_h,
+                f_ck_mpa=f_cu, code=code_choice,
+                wind_speed_m_s=frame_wind, terrain=frame_terrain,
+                wall_load_kn_m=frame_wall, drift_limit=drift_limit,
+            )
+            res = fb.analyse()
+            st.session_state.design_results["frame"] = {
+                "storeys": res.storeys,
+                "storey_height_m": res.storey_height_m,
+                "nodes": len(res.model.nodes),
+                "members": len(res.model.members),
+                "max_drift_x": res.max_drift_x,
+                "max_drift_y": res.max_drift_y,
+                "drift_limit": res.drift_limit,
+                "max_translation_x_mm": res.max_translation_x_mm,
+                "max_translation_y_mm": res.max_translation_y_mm,
+                "base_shear_x_kN": res.base_shear_x_kN,
+                "base_shear_y_kN": res.base_shear_y_kN,
+                "applied_wind_x_kN": res.applied_wind_x_kN,
+                "applied_wind_y_kN": res.applied_wind_y_kN,
+                "wind": res.wind,
+                "warnings": list(res.warnings),
+                "combinations": [asdict(c) for c in res.combinations],
+                "envelopes": [asdict(e) for e in res.envelopes],
+            }
+            st.success("Frame analysis complete.")
+        except Exception as exc:
+            st.error(f"Frame analysis failed: {exc}")
+
+    saved = st.session_state.design_results.get("frame")
+    if saved is None:
+        st.info("Review the frame inputs and click **Run Frame Analysis**.")
+        st.stop()
+
+    st.markdown(f"### Frame summary — {saved['storeys']} storeys × {saved['storey_height_m']} m")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Nodes / members", f"{saved['nodes']} / {saved['members']}")
+    m2.metric("Max drift X", f"{saved['max_drift_x']:.5f}", delta=f"limit {saved['drift_limit']:.5f}", delta_color="off")
+    m3.metric("Max drift Y", f"{saved['max_drift_y']:.5f}")
+    m4.metric("Max lateral displacement", f"{saved['max_translation_x_mm']:.1f} mm")
+
+    b1, b2, b3, b4 = st.columns(4)
+    b1.metric("Base shear X", f"{saved['base_shear_x_kN']:.1f} kN")
+    b2.metric("Applied wind X (unfactored)", f"{saved['applied_wind_x_kN']:.1f} kN")
+    b3.metric("Base shear Y", f"{saved['base_shear_y_kN']:.1f} kN")
+    b4.metric("Applied wind Y (unfactored)", f"{saved['applied_wind_y_kN']:.1f} kN")
+
+    if saved["max_drift_x"] > saved["drift_limit"] or saved["max_drift_y"] > saved["drift_limit"]:
+        st.error("Drift exceeds the selected screening limit — increase stiffness or revise the lateral system.")
+    else:
+        st.success("Drift is within the selected screening limit under the analysed combinations.")
+    for warning in saved.get("warnings", []):
+        st.warning(warning)
+
+    st.markdown("### Load combinations")
+    combo_rows = [{"Combination": c["name"], "Kind": c["kind"],
+                   **{f"γ{k}": v for k, v in c["factors"].items()}}
+                  for c in saved["combinations"]]
+    st.dataframe(pd.DataFrame(combo_rows), use_container_width=True, hide_index=True)
+    st.caption("Wind combinations are analysed in X and Y separately; the member envelope covers both directions.")
+
+    st.markdown("### Member action envelope")
+    env_df = pd.DataFrame(saved["envelopes"])
+    if not env_df.empty:
+        kind_filter = st.multiselect("Member type", ["beam", "column"], default=["beam", "column"])
+        view = env_df[env_df["kind"].isin(kind_filter)].copy()
+        view = view.sort_values("Mz_max_kNm", ascending=False)
+        st.dataframe(
+            view.rename(columns={
+                "label": "Member", "kind": "Type", "N_max_kN": "N max (kN)",
+                "Mz_max_kNm": "Mz max (kNm)", "My_max_kNm": "My max (kNm)",
+                "Vy_max_kN": "Vy max (kN)", "Vz_max_kN": "Vz max (kN)",
+            })[["Member", "Type", "N max (kN)", "Mz max (kNm)", "My max (kNm)", "Vy max (kN)", "Vz max (kN)"]],
+            use_container_width=True, hide_index=True,
+        )
+        st.caption("End-force envelope across ULS/SLS combinations. Beam design still uses the Continuous Beam module; column design can be run with the envelope moments and axial loads.")
+    st.caption("Frame scope: rigid joints, fixed bases, no soil-structure interaction, no seismic action, no floor-diaphragm flexibility, no second-order frame effects.")
 
 # ==========================================
 # 3. CONTINUOUS BEAM (RCC41)
