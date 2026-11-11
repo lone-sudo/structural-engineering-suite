@@ -164,16 +164,19 @@ class BuildingModel:
         spans = beam.get("spans_detail", [])
         if sb.get("bars", 0):
             for i, span in enumerate(spans, start=1):
+                lbd_m = float(span.get("lbd_span_mm") or 0.0) / 1000.0
                 add(f"B01-{i}", "Beam", f"Bottom span {i}", sb["description"], sb["bar_diameter"],
-                    sb["bars"], float(span["length_m"]))
+                    sb["bars"], float(span["length_m"]) + 2.0 * lbd_m)
         tb = beam["supp_bars"]
         num_spans = int(beam.get("num_spans", len(spans) or 1))
         if tb.get("bars", 0) and beam.get("M_support_kNm", 0) > 0 and num_spans >= 2:
-            # Preliminary 0.30L anchorage extension each side of each
-            # interior support (n-1 interior supports for n spans).
+            # Use the EC2 anchorage length when available; otherwise retain
+            # the preliminary 0.30L extension each side of the support.
             avg_span = (sum(float(s["length_m"]) for s in spans) / len(spans)) if spans else self.ly
+            lbd_supp = max((float(s.get("lbd_support_mm") or 0.0) for s in spans), default=0.0) / 1000.0
+            top_len = max(2.0 * lbd_supp, 0.60 * avg_span) if lbd_supp else 0.60 * avg_span
             add("B02", "Beam", "Top support", tb["description"], tb["bar_diameter"],
-                tb["bars"] * (num_spans - 1), 0.60 * avg_span)
+                tb["bars"] * (num_spans - 1), top_len)
 
         col = full_results["column"]["main_rebar"]
         if col.get("bars", 0):

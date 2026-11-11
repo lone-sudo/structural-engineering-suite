@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import Dict, List, Union
 import math
 
+from core.detailing import ec2_anchorage, ec2_lap
 from core.rebar import RebarSelector
 from core.results import DesignAudit, CheckStatus
-from core.standards import BS8110, Eurocode2, design_flexure, load_factors
+from core.serviceability import ec2_crack_width
+from core.standards import BS8110, Eurocode2, design_flexure, design_flexure_T, load_factors
 from core.beam_analysis import envelope_analysis, analyze_continuous_beam, SpanLoadInput, SpanInput
 
 Number = Union[float, int]
@@ -40,7 +42,9 @@ class ContinuousBeam:
         gk_slab=12.0, qk_slab=6.0,
         wall_height: float = 2.8, wall_unit_weight: float = 18.0,
         wall_thick: float = 0.20, f_cu: float = 25.0, f_y: float = 460.0,
-        f_yv: float = 250.0, code: str = "BS8110"
+        f_yv: float = 250.0, code: str = "BS8110",
+        psi2: float = 0.3, crack_limit: float = 0.30,
+        flange_width=0.0, flange_thickness=0.0,
     ):
         if not spans or any(s <= 0 for s in spans):
             raise ValueError("spans must contain positive lengths in metres.")
@@ -51,6 +55,13 @@ class ContinuousBeam:
         self.h_list = _broadcast(h_overall, n, "h_overall")
         self.gk_slab_list = _broadcast(gk_slab, n, "gk_slab")
         self.qk_slab_list = _broadcast(qk_slab, n, "qk_slab")
+        self.flange_width_list = _broadcast(flange_width, n, "flange_width")
+        self.flange_thickness_list = _broadcast(flange_thickness, n, "flange_thickness")
+        for i in range(n):
+            if self.flange_width_list[i] and self.flange_width_list[i] < self.b_w_list[i]:
+                raise ValueError("Flange width must be zero or at least the web width.")
+            if self.flange_width_list[i] and not (0 < self.flange_thickness_list[i] < self.h_list[i]):
+                raise ValueError("Flange thickness must be between zero and the overall depth.")
         if any(v <= 0 for v in self.b_w_list) or any(v <= 0 for v in self.h_list):
             raise ValueError("b_w and h_overall must be positive for every span.")
         if any(v < 0 for v in self.gk_slab_list) or any(v < 0 for v in self.qk_slab_list):
@@ -58,6 +69,8 @@ class ContinuousBeam:
 
         self.cover = cover
         self.f_cu, self.f_y, self.f_yv, self.code = f_cu, f_y, f_yv, code
+        self.psi2 = psi2
+        self.crack_limit = crack_limit
         self.wall_height, self.wall_thick, self.wall_unit_weight = wall_height, wall_thick, wall_unit_weight
         self.gk_wall = wall_height * wall_thick * wall_unit_weight
 
@@ -98,6 +111,17 @@ class ContinuousBeam:
         ]
         envelope = envelope_analysis(span_loads)
 
+        # Quasi-permanent service envelope for crack width: 1.0Gk + psi2 Qk.
+        qp_loads = [
+            SpanLoadInput(
+                length_m=self.spans[i], I_relative=I_list[i],
+                gk_kn_m=gk_total_list[i], qk_kn_m=qk_total_list[i],
+                gamma_g=1.0, gamma_q=self.psi2,
+            )
+            for i in range(n)
+        ]
+        qp_envelope = envelope_analysis(qp_loads)
+
         gk_service = analyze_continuous_beam([SpanInput(length_m=self.spans[i], I_relative=I_list[i], w_ult_kn_m=gk_total_list[i]) for i in range(n)])
         has_qk = any(qk_total_list)
         qk_service = analyze_continuous_beam([SpanInput(length_m=self.spans[i], I_relative=I_list[i], w_ult_kn_m=qk_total_list[i]) for i in range(n)]) if has_qk else None
@@ -125,13 +149,28 @@ class ContinuousBeam:
             # module selects) is conservative for smaller bars: a larger
             # d_prime increases the required compression steel.
             d_prime = self.cover + self.link_dia + 12.5
+            b_eff = self.flange_width_list[i]
+            h_f = self.flange_thickness_list[i]
+            has_flange = bool(b_eff and h_f)
             if self.code == "BS8110":
-                span_flex = design_flexure("BS8110", M_u=M_span, b=b_w, d=d, f_cu=self.f_cu, f_y=self.f_y, d_prime=d_prime, min_steel_h=h)
+                if has_flange:
+                    span_flex = design_flexure_T(
+                        "BS8110", M_span, b_eff, b_w, h_f, d, h,
+                        self.f_cu, self.f_y, d_prime=d_prime,
+                    )
+                else:
+                    span_flex = design_flexure("BS8110", M_u=M_span, b=b_w, d=d, f_cu=self.f_cu, f_y=self.f_y, d_prime=d_prime, min_steel_h=h)
                 supp_flex = design_flexure("BS8110", M_u=M_support, b=b_w, d=d, f_cu=self.f_cu, f_y=self.f_y, d_prime=d_prime, min_steel_h=h) if M_support else {"As_req": 0.0, "section_type": "n/a"}
                 f_ck = None
             else:
                 f_ck = self.f_cu
-                span_flex = design_flexure("Eurocode 2", M_Ed=M_span, b=b_w, d=d, f_ck=f_ck, f_yk=self.f_y, d_prime=d_prime)
+                if has_flange:
+                    span_flex = design_flexure_T(
+                        "Eurocode 2", M_span, b_eff, b_w, h_f, d, h,
+                        f_ck, self.f_y, d_prime=d_prime,
+                    )
+                else:
+                    span_flex = design_flexure("Eurocode 2", M_Ed=M_span, b=b_w, d=d, f_ck=f_ck, f_yk=self.f_y, d_prime=d_prime)
                 supp_flex = design_flexure("Eurocode 2", M_Ed=M_support, b=b_w, d=d, f_ck=f_ck, f_yk=self.f_y, d_prime=d_prime) if M_support else {"As_req": 0.0, "section_type": "n/a"}
 
             span_opts = RebarSelector.select_beam_bars(
@@ -230,16 +269,75 @@ class ContinuousBeam:
                     k_system = 1.3
                 else:
                     k_system = 1.5
+                F1 = 0.8 if has_flange and b_eff / b_w > 3.0 else 1.0
                 defl = Eurocode2.span_depth_limit(
                     f_ck, span_flex["As_req"], span_bars["As_prov"], b_w, d,
                     K=k_system, As_comp=span_flex.get("As_comp", 0.0), f_yk=self.f_y,
+                    F1=F1,
                 )
                 deflection_status = "PASS" if actual_span_d <= defl["allowable_span_d"] else "FAIL"
                 allowable_span_d = round(defl["allowable_span_d"], 2)
 
+            # Crack width under the quasi-permanent combination. EC2 is
+            # implemented; BS 8110 crack-width control is honestly left as
+            # NOT CHECKED rather than approximated by the EC2 formula.
+            M_qp_span = max(0.0, float(qp_envelope[i].M_span_max_kNm))
+            M_qp_support = max(
+                abs(float(qp_envelope[i].M_left_support_kNm)),
+                abs(float(qp_envelope[i].M_right_support_kNm)),
+            )
+            if self.code == "Eurocode 2" and span_bars["As_prov"] > 0:
+                cw_span = ec2_crack_width(
+                    M_qp_span, b_w, h, d, span_bars["As_prov"],
+                    span_bars.get("bar_diameter", 16), self.cover + self.link_dia,
+                    self.f_cu, self.f_y, self.crack_limit,
+                )
+                crack_span_status = cw_span["status"]
+            else:
+                cw_span = {"wk_mm": None, "status": "NOT CHECKED",
+                           "message": "BS 8110 crack width is not implemented; only the EC2 method is available."}
+                crack_span_status = "NOT CHECKED"
+
+            if M_support <= 0 or supp_bars["As_prov"] <= 0:
+                cw_supp = {"wk_mm": None, "status": "N/A",
+                           "message": "No hogging moment — top crack width not applicable."}
+                crack_supp_status = "N/A"
+            elif self.code == "Eurocode 2":
+                cw_supp = ec2_crack_width(
+                    M_qp_support, b_w, h, d, supp_bars["As_prov"],
+                    supp_bars.get("bar_diameter", 16), self.cover + self.link_dia,
+                    self.f_cu, self.f_y, self.crack_limit,
+                )
+                crack_supp_status = cw_supp["status"]
+            else:
+                cw_supp = {"wk_mm": None, "status": "NOT CHECKED",
+                           "message": "BS 8110 crack width is not implemented; only the EC2 method is available."}
+                crack_supp_status = "NOT CHECKED"
+
+            if self.code == "Eurocode 2" and span_bars["As_prov"] > 0:
+                anch_span = ec2_anchorage(
+                    span_bars.get("bar_diameter", 16), self.f_cu, self.f_y
+                )
+                lap_span = ec2_lap(span_bars.get("bar_diameter", 16), self.f_cu, self.f_y)
+            else:
+                anch_span = lap_span = None
+            if self.code == "Eurocode 2" and supp_bars["As_prov"] > 0 and M_support > 0:
+                anch_supp = ec2_anchorage(
+                    supp_bars.get("bar_diameter", 16), self.f_cu, self.f_y
+                )
+                lap_supp = ec2_lap(supp_bars.get("bar_diameter", 16), self.f_cu, self.f_y)
+            else:
+                anch_supp = lap_supp = None
+
             tag = f"Span {i+1}"
             audit.add(f"{tag} — Flexure at span", CheckStatus.PASS if span_bars["As_prov"] >= span_flex["As_req"] else CheckStatus.FAIL,
                       demand=span_flex["As_req"], capacity=span_bars["As_prov"], unit="mm²")
+            if span_flex.get("over_reinforced"):
+                audit.add(
+                    f"{tag} — T-beam ductility", CheckStatus.FAIL,
+                    message="T-beam compression zone exceeds the code ductility limit; provide compression "
+                            "steel or increase the section depth.",
+                )
             audit.add(f"{tag} — Flexure at support", CheckStatus.PASS if supp_bars["As_prov"] >= supp_flex["As_req"] else CheckStatus.FAIL,
                       demand=supp_flex["As_req"], capacity=supp_bars["As_prov"], unit="mm²")
             audit.add(f"{tag} — Shear", CheckStatus.PASS if shear["status"] == "PASS" else CheckStatus.FAIL if shear["status"] == "FAIL" else CheckStatus.NOT_CHECKED,
@@ -259,17 +357,53 @@ class ContinuousBeam:
                           demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
                           message="EN 1992-1-1 7.4.2 span/depth screening using Expressions (7.16) and "
                                   "the UK NA cap; not a full long-term deflection calculation.")
+            audit.add(
+                f"{tag} — Crack width (span)",
+                CheckStatus.PASS if crack_span_status == "PASS"
+                else CheckStatus.FAIL if crack_span_status == "FAIL"
+                else CheckStatus.NOT_APPLICABLE if crack_span_status == "N/A"
+                else CheckStatus.NOT_CHECKED,
+                demand=round(cw_span["wk_mm"], 3) if cw_span["wk_mm"] is not None else None,
+                capacity=self.crack_limit if self.code == "Eurocode 2" else None,
+                unit="mm",
+                message=cw_span.get("message", ""),
+            )
+            audit.add(
+                f"{tag} — Crack width (support)",
+                CheckStatus.PASS if crack_supp_status == "PASS"
+                else CheckStatus.FAIL if crack_supp_status == "FAIL"
+                else CheckStatus.NOT_APPLICABLE if crack_supp_status == "N/A"
+                else CheckStatus.NOT_CHECKED,
+                demand=round(cw_supp["wk_mm"], 3) if cw_supp["wk_mm"] is not None else None,
+                capacity=self.crack_limit if self.code == "Eurocode 2" else None,
+                unit="mm",
+                message=cw_supp.get("message", ""),
+            )
             if detailing_note:
                 audit.add(f"{tag} — Bar fit", CheckStatus.FAIL,
                           message=detailing_note)
 
             span_results.append({
                 "span_index": i, "length_m": self.spans[i], "b_w": b_w, "h_overall": h, "d_eff_mm": d,
+                "section_type": span_flex.get("section_type", "rectangular"),
+                "flange_width_mm": b_eff if has_flange else 0.0,
+                "flange_thickness_mm": h_f if has_flange else 0.0,
                 "gk_total_kN_m": round(gk_total_list[i], 3), "qk_total_kN_m": round(qk_total_list[i], 3),
                 "w_ult_kN_m": round(gamma_g * gk_total_list[i] + gamma_q * qk_total_list[i], 3),
                 "M_span_kNm": round(M_span, 3), "M_support_kNm": round(M_support, 3), "V_design_kN": round(V_design, 3),
                 "M_left_support_kNm": round(envelope[i].M_left_support_kNm, 3),
                 "M_right_support_kNm": round(envelope[i].M_right_support_kNm, 3),
+                "M_qp_span_kNm": round(M_qp_span, 3),
+                "M_qp_support_kNm": round(M_qp_support, 3),
+                "wk_span_mm": round(cw_span["wk_mm"], 3) if cw_span["wk_mm"] is not None else None,
+                "wk_support_mm": round(cw_supp["wk_mm"], 3) if cw_supp["wk_mm"] is not None else None,
+                "crack_span_status": crack_span_status,
+                "crack_support_status": crack_supp_status,
+                "sigma_s_span_Nmm2": round(cw_span.get("sigma_s", 0.0), 1),
+                "lbd_span_mm": round(anch_span["lbd_mm"], 1) if anch_span else None,
+                "lap_span_mm": round(lap_span["l0_mm"], 1) if lap_span else None,
+                "lbd_support_mm": round(anch_supp["lbd_mm"], 1) if anch_supp else None,
+                "lap_support_mm": round(lap_supp["l0_mm"], 1) if lap_supp else None,
                 "span_bars": span_bars, "supp_bars": supp_bars, "link_schedule": link_schedule,
                 "shear_status": shear["status"], "deflection_status": deflection_status,
                 "actual_span_d": round(actual_span_d, 2), "allowable_span_d": allowable_span_d,
@@ -290,6 +424,10 @@ class ContinuousBeam:
             "NOT CHECKED" if any(s["shear_status"] == "NOT CHECKED" for s in span_results) else "PASS")
         overall_deflection_status = "FAIL" if any(s["deflection_status"] == "FAIL" for s in span_results) else (
             "NOT CHECKED" if any(s["deflection_status"] == "NOT CHECKED" for s in span_results) else "PASS")
+        _crack_statuses = [s["crack_span_status"] for s in span_results] + [s["crack_support_status"] for s in span_results]
+        _crack_active = [s for s in _crack_statuses if s != "N/A"]
+        overall_crack_status = "FAIL" if "FAIL" in _crack_active else (
+            "NOT CHECKED" if "NOT CHECKED" in _crack_active else "PASS")
 
         return {
             "analysis_method": "Matrix (slope-deflection) analysis with BS 8110/EC2-style pattern loading — arbitrary spans, independent length/width/depth per span.",
@@ -305,6 +443,7 @@ class ContinuousBeam:
             "supp_bars": governing["supp_bars"],
             "link_schedule": governing["link_schedule"],
             "shear_status": overall_shear_status,
+            "crack_status": overall_crack_status,
             "actual_span_d": governing["actual_span_d"],
             "allowable_span_d": governing["allowable_span_d"],
             "deflection_status": overall_deflection_status,
@@ -317,8 +456,10 @@ class ContinuousBeam:
                 "Pattern loading covers all-spans-loaded, each single span loaded, alternate spans, and each adjacent pair; it does not search every possible 2^n combination, though these cases govern the vast majority of practical UDL-only continuous beams.",
                 "Only uniformly distributed load is modelled — point loads are not yet supported.",
                 "Deflection is a simplified span/effective-depth screening check, not a full long-term deflection analysis. Compression-steel modification is not applied to the BS 8110 check.",
+                "EC2 crack width (7.3.4) is checked under the quasi-permanent combination only. BS 8110 crack width is NOT CHECKED; do not treat the EC2 result as a BS 8110 compliance statement.",
+                "EC2 anchorage and lap lengths (8.4/8.7) are reported for detailing, but available embedment at supports/laps is not checked against the actual support widths and drawing.",
                 "EC2 shear uses the variable strut inclination method with cot(theta)=2.5; a full theta-optimisation and detailed link curtailment are not implemented.",
-                "Only rectangular sections are supported — T-beam/L-beam (flanged section) design is not yet implemented.",
+                "T-beam sagging design is supported only when the effective flange width and thickness are supplied. The effective width is not derived automatically, L-beams are not supported, and shear between the web and flange is not checked. Hogging design uses the rectangular web.",
                 "Beam bars are assumed to fit in ONE layer; arrangements needing two layers are reported as a FAIL rather than silently reducing the effective depth.",
                 "The flat top-level fields (M_span_kNm, span_bars, etc.) report the GOVERNING span (the one with the largest reinforcement demand); see 'spans_detail' for the full per-span breakdown.",
             ],

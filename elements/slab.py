@@ -4,6 +4,7 @@ from typing import Dict, Tuple
 
 from core.rebar import RebarSelector
 from core.results import DesignAudit, CheckStatus
+from core.serviceability import ec2_crack_width
 from core.standards import BS8110, Eurocode2, design_flexure, load_factors
 
 
@@ -17,7 +18,8 @@ class OneWaySlab:
     """
     def __init__(self, span: float, h_slab: float = 150.0, cover: float = 25.0,
                  gk_finishes: float = 1.5, qk_live: float = 2.0,
-                 f_cu: float = 25.0, f_y: float = 460.0, code: str = "BS8110"):
+                 f_cu: float = 25.0, f_y: float = 460.0, code: str = "BS8110",
+                 psi2: float = 0.3, crack_limit: float = 0.30):
         if span <= 0 or h_slab <= 0:
             raise ValueError("Span and slab thickness must be positive.")
         if gk_finishes < 0 or qk_live < 0:
@@ -25,6 +27,8 @@ class OneWaySlab:
         self.span, self.h, self.cover = span, h_slab, cover
         self.gk_finishes, self.qk = gk_finishes, qk_live
         self.f_cu, self.f_y, self.code = f_cu, f_y, code
+        self.psi2 = psi2
+        self.crack_limit = crack_limit
         self.bar_dia = 10.0
         self.gk_self = h_slab / 1000 * 24.0
         self.gk_total = self.gk_self + gk_finishes
@@ -76,6 +80,27 @@ class OneWaySlab:
             audit.add("Deflection (span/depth screening)", CheckStatus.PASS if deflection_status == "PASS" else CheckStatus.FAIL,
                       demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
                       message="EN 1992-1-1 7.4.2 span/depth screening; not a full long-term deflection calculation.")
+
+        M_qp = (self.gk_total + self.psi2 * self.qk) * self.span ** 2 / 8.0
+        if self.code == "Eurocode 2" and rebar["As_prov"] > 0:
+            d_actual = self.h - self.cover - rebar["bar_diameter"] / 2.0
+            cw = ec2_crack_width(
+                M_qp, 1000, self.h, d_actual, rebar["As_prov"],
+                rebar["bar_diameter"], self.cover, self.f_cu, self.f_y, self.crack_limit,
+            )
+            crack_status = cw["status"]
+        else:
+            cw = {"wk_mm": None, "status": "NOT CHECKED",
+                  "message": "BS 8110 crack width is not implemented; only the EC2 method is available."}
+            crack_status = "NOT CHECKED"
+        audit.add(
+            "Crack width (quasi-permanent)",
+            CheckStatus.PASS if crack_status == "PASS" else CheckStatus.FAIL if crack_status == "FAIL" else CheckStatus.NOT_CHECKED,
+            demand=round(cw["wk_mm"], 3) if cw["wk_mm"] is not None else None,
+            capacity=self.crack_limit if self.code == "Eurocode 2" else None,
+            unit="mm", message=cw.get("message", ""),
+        )
+
         return {
             "analysis_method": "Simply supported 1 m strip preliminary analysis",
             "gk_self_kpa": round(self.gk_self, 3),
@@ -88,13 +113,18 @@ class OneWaySlab:
             "As_req_mm2_m": round(flex["As_req"], 2),
             "rebar": rebar,
             "v_stress_Nmm2": round(v_stress, 4),
+            "M_qp_kNm_per_m": round(M_qp, 3),
+            "wk_mm": round(cw["wk_mm"], 3) if cw["wk_mm"] is not None else None,
+            "sigma_s_Nmm2": round(cw.get("sigma_s", 0.0), 1),
+            "crack_status": crack_status,
             "actual_span_d": round(actual_span_d, 2),
             "allowable_span_d": allowable_span_d,
             "deflection_status": deflection_status,
             "audit": audit.as_dict(),
             "limitations": [
                 "Simply supported one-way strip; support continuity is not modelled.",
-                "Shear and deflection are simplified screening checks (unreinforced-slab shear stress, span/effective-depth ratio), not full crack-width, vibration or long-term deflection calculations.",
+                "Shear and deflection are simplified screening checks (unreinforced-slab shear stress, span/effective-depth ratio), not full vibration or long-term deflection calculations.",
+                "EC2 crack width (7.3.4) is checked under the quasi-permanent combination. BS 8110 crack width is NOT CHECKED.",
             ],
         }
 
@@ -155,7 +185,7 @@ class TwoWaySlab:
         self, lx: float, ly: float, h_slab: float = 150.0, cover: float = 25.0,
         gk_finishes: float = 1.5, qk_live: float = 2.0, f_cu: float = 25.0,
         f_y: float = 460.0, panel_type: str = "Interior Panel",
-        code: str = "BS8110"
+        code: str = "BS8110", psi2: float = 0.3, crack_limit: float = 0.30,
     ):
         if lx <= 0 or ly <= 0 or h_slab <= 0:
             raise ValueError("Slab dimensions and thickness must be positive.")
@@ -165,12 +195,15 @@ class TwoWaySlab:
         self.gk_fin, self.qk = gk_finishes, qk_live
         self.f_cu, self.f_y = f_cu, f_y
         self.panel_type, self.code = panel_type, code
+        self.psi2 = psi2
+        self.crack_limit = crack_limit
         self.bar_dia = 10
 
         self.gk_self = h_slab / 1000 * 24.0
         self.gk_total = self.gk_self + gk_finishes
         gamma_g, gamma_q = load_factors(code)
         self.n_ult = gamma_g * self.gk_total + gamma_q * self.qk
+        self.n_qp = self.gk_total + self.psi2 * self.qk
 
         self.dx = self.h - self.cover - self.bar_dia / 2
         self.dy = self.dx - self.bar_dia
@@ -288,6 +321,49 @@ class TwoWaySlab:
                       message="EN 1992-1-1 7.4.2 span/depth screening (K="
                               f"{k_system:g}); not a full long-term deflection calculation.")
 
+        # Crack width under the quasi-permanent combination (EC2 only).
+        M_qp_x_pos = axp * self.n_qp * self.lx ** 2
+        M_qp_y_pos = ayp * self.n_qp * self.lx ** 2
+        M_qp_x_neg = axn * self.n_qp * self.lx ** 2
+        M_qp_y_neg = ayn * self.n_qp * self.lx ** 2
+        dx_actual = self.h - self.cover - sx_bar["bar_diameter"] / 2.0
+        dy_actual = self.h - self.cover - sx_bar["bar_diameter"] - sy_bar["bar_diameter"] / 2.0
+        crack_results = {}
+        for key, M_qp, b_bar, d_eff in (
+            ("x_pos", M_qp_x_pos, sx_bar, dx_actual),
+            ("y_pos", M_qp_y_pos, sy_bar, max(dy_actual, 1.0)),
+            ("x_neg", M_qp_x_neg, sx_neg_bar, dx_actual),
+            ("y_neg", M_qp_y_neg, sy_neg_bar, max(dy_actual, 1.0)),
+        ):
+            if M_qp <= 0 or b_bar["As_prov"] <= 0:
+                cw = {"wk_mm": None, "status": "N/A",
+                      "message": "No moment in this location — crack width not applicable."}
+                stat = "N/A"
+            elif self.code == "Eurocode 2":
+                cw = ec2_crack_width(
+                    max(0.0, M_qp), 1000, self.h, d_eff, b_bar["As_prov"],
+                    b_bar["bar_diameter"], self.cover, self.f_cu, self.f_y, self.crack_limit,
+                )
+                stat = cw["status"]
+            else:
+                cw = {"wk_mm": None, "status": "NOT CHECKED",
+                      "message": "BS 8110 crack width is not implemented; only the EC2 method is available."}
+                stat = "NOT CHECKED"
+            crack_results[key] = {"result": cw, "status": stat, "M_qp": M_qp}
+            audit.add(
+                f"Crack width {key.replace('_', ' ')} (quasi-permanent)",
+                CheckStatus.PASS if stat == "PASS"
+                else CheckStatus.FAIL if stat == "FAIL"
+                else CheckStatus.NOT_APPLICABLE if stat == "N/A"
+                else CheckStatus.NOT_CHECKED,
+                demand=round(cw["wk_mm"], 3) if cw["wk_mm"] is not None else None,
+                capacity=self.crack_limit if self.code == "Eurocode 2" else None,
+                unit="mm", message=cw.get("message", ""),
+            )
+        _crack_statuses = [v["status"] for v in crack_results.values() if v["status"] != "N/A"]
+        overall_crack_status = "FAIL" if "FAIL" in _crack_statuses else (
+            "NOT CHECKED" if "NOT CHECKED" in _crack_statuses else "PASS")
+
         # Service and ultimate tributary line reactions are kept separate.
         gk_short = self.gk_total * self.lx / 3
         qk_short = self.qk * self.lx / 3
@@ -312,6 +388,12 @@ class TwoWaySlab:
             "Msx_neg": round(Msx_neg, 3), "Msy_neg": round(Msy_neg, 3),
             "rebar_sx": sx_bar, "rebar_sy": sy_bar,
             "rebar_sx_neg": sx_neg_bar, "rebar_sy_neg": sy_neg_bar,
+            "n_qp_kpa": round(self.n_qp, 3),
+            "crack_status": overall_crack_status,
+            "wk_x_pos_mm": round(crack_results["x_pos"]["result"]["wk_mm"], 3) if crack_results["x_pos"]["result"]["wk_mm"] is not None else None,
+            "wk_y_pos_mm": round(crack_results["y_pos"]["result"]["wk_mm"], 3) if crack_results["y_pos"]["result"]["wk_mm"] is not None else None,
+            "wk_x_neg_mm": round(crack_results["x_neg"]["result"]["wk_mm"], 3) if crack_results["x_neg"]["result"]["wk_mm"] is not None else None,
+            "wk_y_neg_mm": round(crack_results["y_neg"]["result"]["wk_mm"], 3) if crack_results["y_neg"]["result"]["wk_mm"] is not None else None,
             "deflection_status": deflection_status,
             "actual_span_d": round(actual_span_d, 2),
             "allowable_span_d": allowable_span_d,
@@ -324,7 +406,8 @@ class TwoWaySlab:
             "limitations": [
                 "Coefficient-based two-way slab analysis assumes the tabulated rectangular-panel method and its applicability conditions.",
                 "Selecting Eurocode 2 changes the load factors and the section resistance, but the bending-moment analysis still uses the BS 8110 Table 3.14 coefficients. It is not an EC2-specific coefficient method, a finite-element analysis or an equivalent-frame analysis.",
-                "Deflection is a simplified span/effective-depth screening check on the short-span strip only; not a full crack-width or long-term deflection calculation.",
+                "Deflection is a simplified span/effective-depth screening check on the short-span strip only; not a full long-term deflection calculation.",
+                "EC2 crack width (7.3.4) is checked at the four critical moment locations under the quasi-permanent combination. BS 8110 crack width is NOT CHECKED.",
                 "Corner torsion detailing is not yet generated from the selected edge condition.",
                 "The line loads reported for the supporting beams are moment-equivalent UDLs (not raw tributary reactions); they are appropriate for beam bending design but conservative for column load takedown.",
             ],

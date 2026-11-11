@@ -887,8 +887,10 @@ elif module == "Beam Design":
     if "beam_span_table" not in st.session_state:
         st.session_state.beam_span_table = pd.DataFrame([
             {"Length (m)": float(st.session_state.project_data["span_y"]), "Width bw (mm)": 200.0, "Depth h (mm)": 450.0,
+             "Flange width (mm)": 0.0, "Flange thickness (mm)": 0.0,
              "Other Dead Gk (kN/m)": 12.0, "Imposed Qk (kN/m)": 6.0},
             {"Length (m)": float(st.session_state.project_data["span_y"]), "Width bw (mm)": 200.0, "Depth h (mm)": 450.0,
+             "Flange width (mm)": 0.0, "Flange thickness (mm)": 0.0,
              "Other Dead Gk (kN/m)": 12.0, "Imposed Qk (kN/m)": 6.0},
         ])
 
@@ -899,10 +901,18 @@ elif module == "Beam Design":
             "Length (m)": st.column_config.NumberColumn(min_value=0.5, max_value=30.0, step=0.25, required=True),
             "Width bw (mm)": st.column_config.NumberColumn(min_value=100.0, max_value=1000.0, step=25.0, required=True),
             "Depth h (mm)": st.column_config.NumberColumn(min_value=150.0, max_value=2000.0, step=25.0, required=True),
+            "Flange width (mm)": st.column_config.NumberColumn(min_value=0.0, step=50.0, help="0 = rectangular beam; otherwise an effective T-beam flange width (e.g. slab tributary width)."),
+            "Flange thickness (mm)": st.column_config.NumberColumn(min_value=0.0, step=10.0, help="Slab thickness for a T-beam; 0 = rectangular beam."),
             "Other Dead Gk (kN/m)": st.column_config.NumberColumn(min_value=0.0, step=1.0, required=True),
             "Imposed Qk (kN/m)": st.column_config.NumberColumn(min_value=0.0, step=1.0, required=True),
         },
     )
+    # Backward compatibility for a session created before the T-beam columns
+    # were added.
+    if "Flange width (mm)" not in span_table.columns:
+        span_table["Flange width (mm)"] = 0.0
+    if "Flange thickness (mm)" not in span_table.columns:
+        span_table["Flange thickness (mm)"] = 0.0
     st.session_state.beam_span_table = span_table
 
     with st.form("beam_wall_inputs"):
@@ -925,14 +935,26 @@ elif module == "Beam Design":
         lengths = table["Length (m)"].tolist()
         widths = table["Width bw (mm)"].tolist()
         depths = table["Depth h (mm)"].tolist()
+        flange_widths = table["Flange width (mm)"].tolist()
+        flange_thicknesses = table["Flange thickness (mm)"].tolist()
         gks = table["Other Dead Gk (kN/m)"].tolist()
         qks = table["Imposed Qk (kN/m)"].tolist()
         try:
-            beam = ContinuousBeam(spans=lengths, b_w=widths, h_overall=depths, cover=cover, gk_slab=gks, qk_slab=qks,
-                                   wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
+            beam = ContinuousBeam(
+                spans=lengths, b_w=widths, h_overall=depths, cover=cover,
+                gk_slab=gks, qk_slab=qks,
+                flange_width=flange_widths, flange_thickness=flange_thicknesses,
+                wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw,
+                f_cu=f_cu, f_y=f_y, code=code_choice,
+            )
             st.session_state.design_results["beam"] = stamp_settings(beam.design_beam())
-            st.session_state.design_inputs["beam"] = dict(spans=lengths, b_w=widths, h_overall=depths, cover=cover, gk_slab=gks, qk_slab=qks,
-                                                           wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw, f_cu=f_cu, f_y=f_y, code=code_choice)
+            st.session_state.design_inputs["beam"] = dict(
+                spans=lengths, b_w=widths, h_overall=depths, cover=cover,
+                gk_slab=gks, qk_slab=qks,
+                flange_width=flange_widths, flange_thickness=flange_thicknesses,
+                wall_height=wall_h, wall_thick=wall_t, wall_unit_weight=wall_uw,
+                f_cu=f_cu, f_y=f_y, code=code_choice,
+            )
         except ValueError as exc:
             st.error(f"Input error: {exc}")
             st.stop()
@@ -955,6 +977,10 @@ elif module == "Beam Design":
         st.success(f"**Bottom Steel (Span):** {b_res['span_bars']['description']}")
         st.success(f"**Top Steel (Support):** {b_res['supp_bars']['description']}")
         st.write(f"**Shear Links:** `{b_res['link_schedule']}`")
+        st.write(
+            f"**Crack width (quasi-permanent):** {b_res.get('crack_status', 'NOT CHECKED')} — "
+            f"governing span wk = {b_res.get('spans_detail', [{}])[0].get('wk_span_mm', '—')} mm"
+        )
         if b_res.get("deflection_status") in ("PASS", "FAIL"):
             span_d_msg = f"span/d = {b_res['actual_span_d']} vs allowable {b_res['allowable_span_d']}"
             if b_res["deflection_status"] == "PASS":
@@ -975,6 +1001,7 @@ elif module == "Beam Design":
         st.markdown("#### Per-span breakdown")
         detail_rows = [{
             "Span": s["span_index"] + 1, "Length (m)": s["length_m"], "b×h (mm)": f"{s['b_w']:.0f}×{s['h_overall']:.0f}",
+            "Section": s.get("section_type", "rectangular"),
             "M span (kNm)": s["M_span_kNm"], "M support (kNm)": s["M_support_kNm"],
             "Bottom steel": s["span_bars"]["description"], "Top steel": s["supp_bars"]["description"],
             "Links": s["link_schedule"], "Shear": s["shear_status"], "Deflection": s["deflection_status"],
@@ -988,7 +1015,10 @@ elif module == "Beam Design":
             gov = max(b_res["spans_detail"], key=lambda s: s["span_bars"]["As_prov"] + s["supp_bars"]["As_prov"])
             dxf_bytes = generate_beam_dxf(
                 b_res, b_w=gov["b_w"], h_overall=gov["h_overall"], cover=beam_inputs.get("cover", cover),
-                code=code_choice, project_name=st.session_state.get("project_name", ""), engineer_name=st.session_state.get("engineer_name", "")
+                code=code_choice, project_name=st.session_state.get("project_name", ""),
+                engineer_name=st.session_state.get("engineer_name", ""),
+                flange_width=gov.get("flange_width_mm", 0.0),
+                flange_thickness=gov.get("flange_thickness_mm", 0.0),
             )
             download_dxf("Beam Design", dxf_bytes, "beam")
             st.caption("The downloaded drawing shows the governing span's section — see the per-span table above for every span's own dimensions and reinforcement.")
@@ -1123,7 +1153,9 @@ elif module == "Column Design":
                 st.warning(
                     f"⚠️ Slender column (EN 1992-1-1 5.8.3.1): λx = {col_res['slenderness_x']}, "
                     f"λy = {col_res['slenderness_y']} vs λlim = {col_res.get('lambda_lim')}. "
-                    "Second-order effects are NOT CHECKED in this release — do not sign this column off from this tool alone."
+                    f"Nominal-curvature second-order moments M2x = {col_res.get('M2_x_kNm', 0)} kNm, "
+                    f"M2y = {col_res.get('M2_y_kNm', 0)} kNm are included with φef = 2.0 — confirm the "
+                    "creep ratio and end-moment assumptions for the project."
                 )
             else:
                 st.warning(
@@ -1133,10 +1165,14 @@ elif module == "Column Design":
 
         st.markdown("##### Biaxial moment-axial interaction (simplified)")
         mcol1, mcol2, mcol3 = st.columns(3)
-        mcol1.metric("Design Mx", f"{col_res['Mx_design_kNm']} kNm", help=f"Includes minimum eccentricity ({col_res['Mx_min_kNm']} kNm) and any slenderness addition ({col_res['Madd_x_kNm']} kNm).")
-        mcol2.metric("Design My", f"{col_res['My_design_kNm']} kNm", help=f"Includes minimum eccentricity ({col_res['My_min_kNm']} kNm) and any slenderness addition ({col_res['Madd_y_kNm']} kNm).")
+        mcol1.metric("Design Mx", f"{col_res['Mx_design_kNm']} kNm", help=f"Includes minimum eccentricity ({col_res['Mx_min_kNm']} kNm) and second-order moment (BS Madd {col_res['Madd_x_kNm']} / EC2 M2 {col_res.get('M2_x_kNm', 0)} kNm).")
+        mcol2.metric("Design My", f"{col_res['My_design_kNm']} kNm", help=f"Includes minimum eccentricity ({col_res['My_min_kNm']} kNm) and second-order moment (BS Madd {col_res['Madd_y_kNm']} / EC2 M2 {col_res.get('M2_y_kNm', 0)} kNm).")
         if col_res["moment_utilization"] is not None:
             show_utilization("Moment interaction", col_res["moment_utilization"], 1.0, "")
+        st.caption(
+            f"Section capacities at the applied axial load: Mx,Rd = {col_res.get('Mx_Rd_kNm')} kNm, "
+            f"My,Rd = {col_res.get('My_Rd_kNm')} kNm. Method: {col_res.get('moment_method', '—')}"
+        )
         if col_res["moment_status"] == "PASS":
             st.success("**Moment interaction: PASS** (simplified linear approximation — see limitations).")
         else:
@@ -1356,6 +1392,11 @@ elif module == "Slab Design":
             st.info(f"**Top X:** {res['rebar_sx_neg']['description']} — required {res['rebar_sx_neg']['As_req']} mm²/m; **Top Y:** {res['rebar_sy_neg']['description']} — required {res['rebar_sy_neg']['As_req']} mm²/m")
         else:
             st.info("**Top reinforcement:** No negative support moment is generated by the selected panel condition.")
+        st.write(
+            f"**Crack width (quasi-permanent):** {res.get('crack_status', 'NOT CHECKED')} — "
+            f"bottom X {res.get('wk_x_pos_mm', '—')} mm, bottom Y {res.get('wk_y_pos_mm', '—')} mm, "
+            f"top X {res.get('wk_x_neg_mm', '—')} mm, top Y {res.get('wk_y_neg_mm', '—')} mm"
+        )
         if res.get("deflection_status") in ("PASS", "FAIL"):
             span_d_msg = f"span/d = {res['actual_span_d']} vs allowable {res['allowable_span_d']}"
             if res["deflection_status"] == "PASS":
@@ -1371,6 +1412,7 @@ elif module == "Slab Design":
         mc2.metric("Design Shear Vu", f"{res['V_u_kN_per_m']} kN/m")
         st.success(f"**Main reinforcement:** {res['rebar']['description']} — required {res['As_req_mm2_m']} mm²/m; provided {res['rebar']['As_prov']} mm²/m")
         st.write(f"**Shear stress:** {res.get('v_stress_Nmm2', 'n/a')} N/mm²")
+        st.write(f"**Crack width (quasi-permanent):** {res.get('crack_status', 'NOT CHECKED')} — wk = {res.get('wk_mm', '—')} mm")
         if res.get("deflection_status") in ("PASS", "FAIL"):
             span_d_msg = f"span/d = {res['actual_span_d']} vs allowable {res['allowable_span_d']}"
             if res["deflection_status"] == "PASS":
@@ -1434,6 +1476,7 @@ elif module == "Stair Design":
             st.success(f"**Deflection screening: PASS** — L/d = {s_res['actual_span_d']} ≤ {s_res['allowable_span_d']}")
         else:
             st.error(f"**Deflection screening: FAIL** — L/d = {s_res['actual_span_d']} > {s_res['allowable_span_d']} (increase waist)")
+    st.write(f"**Crack width (quasi-permanent):** {s_res.get('crack_status', 'NOT CHECKED')} — wk = {s_res.get('wk_mm', '—')} mm")
     show_audit(s_res.get("audit", {}), "Stair verification")
     st.caption(f"End reaction to landing/floor beam: {s_res.get('reaction_to_beam_kN_m')} kN/m.")
     download_calc_sheet("Stair Design", s_res, "stair")

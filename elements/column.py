@@ -5,6 +5,7 @@ from typing import Dict
 
 from core.rebar import RebarSelector
 from core.results import DesignAudit, CheckStatus
+from core.section_analysis import biaxial_utilization
 from core.standards import BS8110, Eurocode2, load_factors
 
 
@@ -193,7 +194,6 @@ class ColumnDesign:
         bar_dia = chosen.get("bar_diameter", 16)
         d_x = self.h - self.cover - link_dia - bar_dia / 2.0   # effective depth, bending about x (h governs)
         d_y = self.b - self.cover - link_dia - bar_dia / 2.0   # effective depth, bending about y (b governs)
-        d_prime = self.cover + link_dia + bar_dia / 2.0
 
         if self.code == "BS8110":
             emin_mm = BS8110.min_eccentricity_mm(self.h)
@@ -209,68 +209,69 @@ class ColumnDesign:
 
         second_order_status = "NOT APPLICABLE" if self.is_short else None
         Madd_x = Madd_y = 0.0
+        M2_x = M2_y = 0.0
+        phi_ef_used = None
         if not self.is_short:
             if self.code == "BS8110":
                 Madd_x = BS8110.additional_moment_kNm(N_ult, self.le, self.h)
                 Madd_y = BS8110.additional_moment_kNm(N_ult, self.le, self.b)
                 second_order_status = "INCLUDED"
             else:
-                second_order_status = "NOT CHECKED"
-
-        Mx_design = Mx_1st + Madd_x
-        My_design = My_1st + Madd_y
-
-        # Approximate pure-moment capacity (N=0), symmetric reinforcement,
-        # tension+compression steel both at yield — a recognised simplified
-        # approximation, not a strain-compatibility solution.
-        if self.code == "BS8110":
-            steel_stress = 0.87 * self.f_y
-        else:
-            steel_stress = self.f_y / 1.15
-        M0_x = steel_stress * (As_prov / 2.0) * (d_x - d_prime) / 1e6   # kNm
-        M0_y = steel_stress * (As_prov / 2.0) * (d_y - d_prime) / 1e6   # kNm
-
-        def _linear_interaction_utilization(M_design: float, M0: float) -> float:
-            if N_rd_kN <= 0 or M0 <= 0:
-                return float("inf")
-            M_allow = M0 * max(0.0, 1.0 - N_ult / N_rd_kN)
-            return M_design / M_allow if M_allow > 0 else float("inf")
-
-        has_applied_moment = (self.Mx_applied > 0 or self.My_applied > 0)
-        if self.code == "BS8110":
-            n_ratio = min(0.6, N_ult * 1000.0 / (self.b * self.h * self.f_cu))
-            beta = BS8110.biaxial_beta(n_ratio)
-            if Mx_design / max(d_x, 1e-6) >= My_design / max(d_y, 1e-6):
-                M_eff = Mx_design + beta * (d_x / max(d_y, 1e-6)) * My_design
-                governing_axis, M0_gov = "x", M0_x
-            else:
-                M_eff = My_design + beta * (d_y / max(d_x, 1e-6)) * Mx_design
-                governing_axis, M0_gov = "y", M0_y
-            moment_utilization = _linear_interaction_utilization(M_eff, M0_gov)
-            biaxial_method = f"BS 8110 Cl. 3.8.4.5 equivalent uniaxial moment method (beta={beta:.2f}, governing axis {governing_axis})."
-        else:
-            NRd_kN = N_rd_kN
-            n_ratio = min(1.0, N_ult / NRd_kN) if NRd_kN > 0 else 1.0
-            a_exp = Eurocode2.biaxial_exponent(n_ratio)
-            ux = _linear_interaction_utilization(Mx_design, M0_x)
-            uy = _linear_interaction_utilization(My_design, M0_y)
-            if ux == float("inf") or uy == float("inf"):
-                moment_utilization = float("inf")
-            elif not has_applied_moment:
-                # With no applied moment, e0 is the code minimum eccentricity
-                # in the direction being considered (EN 1992-1-1 6.1(4)). It
-                # is not an instruction to apply e0 about BOTH axes and then
-                # combine them biaxially; doing that double-counted the
-                # minimum imperfection and produced false FAILs for ordinary
-                # stocky columns. Check the governing axis alone.
-                moment_utilization = max(ux, uy)
-                biaxial_method = (
-                    "EN 1992-1-1 6.1(4) minimum eccentricity about the governing single axis "
-                    "(no applied Mx/My supplied)."
+                # EN 1992-1-1 Cl. 5.8.8 nominal-curvature method.
+                # Assumptions (documented in the result): phi_ef = 2.0,
+                # c = pi^2 = 10, and the default curvature-distribution
+                # factor implied by the code's recommended expressions.
+                f_cd_2 = 0.85 * self.f_cu / 1.5
+                f_yd_2 = self.f_y / 1.15
+                Ac = self.b * self.h
+                omega = As_prov * f_yd_2 / max(Ac * f_cd_2, 1e-9)
+                nu = 1.0 + omega
+                n_axial = N_ult * 1000.0 / max(Ac * f_cd_2, 1e-9)
+                n_bal = 0.4
+                Kr = 1.0 if n_axial <= n_bal else max(
+                    0.0, min(1.0, (nu - n_axial) / max(nu - n_bal, 1e-9))
                 )
-            else:
-                moment_utilization = (ux ** a_exp + uy ** a_exp) ** (1.0 / a_exp)
-                biaxial_method = f"EN 1992-1-1 Cl. 5.8.9(4) exponent method (a={a_exp:.2f})."
+                phi_ef_used = 2.0
+                eps_yd = f_yd_2 / 200_000.0
+
+                def _m2(d_eff: float, slenderness: float) -> float:
+                    beta_c = 0.35 + self.f_cu / 200.0 - slenderness / 150.0
+                    K_phi = max(1.0, 1.0 + beta_c * phi_ef_used)
+                    inv_r = Kr * K_phi * eps_yd / max(0.45 * d_eff, 1e-9)
+                    e2_mm = inv_r * self.le ** 2 / 10.0
+                    return N_ult * e2_mm / 1000.0  # kNm
+
+                M2_x = _m2(d_x, self.slenderness_x)
+                M2_y = _m2(d_y, self.slenderness_y)
+                second_order_status = "INCLUDED (EC2)"
+
+        Mx_design = Mx_1st + Madd_x + M2_x
+        My_design = My_1st + Madd_y + M2_y
+
+        # Real strain-compatibility interaction: the uniaxial moment
+        # capacities Mx_Rd and My_Rd are built from a rectangular stress
+        # block and the actual bar layout at the applied axial load, not from
+        # the previous steel-couple-only approximation.
+        has_applied_moment = (self.Mx_applied > 0 or self.My_applied > 0)
+        if chosen.get("bars", 0) >= 4 and chosen.get("bar_diameter", 0) > 0:
+            positions = RebarSelector.column_bar_positions(
+                int(chosen["bars"]), self.b, self.h, self.cover, link_dia, bar_dia
+            )
+            area_per_bar = As_prov / float(chosen["bars"])
+            bars_xy = [(x, y, area_per_bar) for x, y in positions]
+            interaction = biaxial_utilization(
+                N_ult, Mx_design, My_design, self.b, self.h, bars_xy,
+                f_c=self.f_cu, f_y=self.f_y, code=self.code,
+                single_axis=(self.code == "Eurocode 2" and not has_applied_moment),
+            )
+            moment_utilization = float(interaction["utilization"])
+            Mx_Rd = float(interaction["Mx_Rd"])
+            My_Rd = float(interaction["My_Rd"])
+            biaxial_method = str(interaction["method"])
+        else:
+            moment_utilization = float("inf")
+            Mx_Rd = My_Rd = 0.0
+            biaxial_method = "no valid bar layout available for section analysis"
 
         moment_status = "PASS" if moment_utilization <= 1.0 + 1e-9 else "FAIL"
 
@@ -293,8 +294,9 @@ class ColumnDesign:
             )
         else:
             interaction_note = (
-                f"{biaxial_method} Simplified linear N-M interaction approximation — not a full strain-compatibility "
-                "interaction diagram; verify with a full column design chart before construction if utilization is close to 1.0."
+                f"{biaxial_method}. Uniaxial capacities are from a rectangular stress-block / plane-strain "
+                "section analysis at the applied axial load; biaxial combination follows the selected code. "
+                "This is a design aid, not a substitute for project software or a published column chart."
             )
 
         audit = DesignAudit()
@@ -329,9 +331,15 @@ class ColumnDesign:
         if second_order_status == "NOT CHECKED":
             audit.add(
                 "Slenderness — second-order moment", CheckStatus.NOT_CHECKED,
-                message="Column is slender under EN 1992-1-1 5.8.3.1; the EC2 nominal-curvature second-order "
-                        "moment (5.8.8) is not implemented in this release, so the column cannot be signed off "
-                        "by this tool until that check is completed independently."
+                message="Column is slender but no second-order moment could be formed."
+            )
+        elif second_order_status == "INCLUDED (EC2)":
+            audit.add(
+                "Slenderness — second-order moment", CheckStatus.WARNING,
+                demand=round(max(M2_x, M2_y), 2), unit="kNm",
+                message="EN 1992-1-1 5.8.8 nominal-curvature moment included, with phi_ef = 2.0, "
+                        "c = 10 and default Kr/Kphi assumptions. Confirm the creep ratio and end-moment "
+                        "ratio for the project before construction."
             )
         elif second_order_status == "INCLUDED":
             audit.add(
@@ -379,23 +387,28 @@ class ColumnDesign:
             "My_design_kNm": round(My_design, 2),
             "Madd_x_kNm": round(Madd_x, 2),
             "Madd_y_kNm": round(Madd_y, 2),
+            "M2_x_kNm": round(M2_x, 2),
+            "M2_y_kNm": round(M2_y, 2),
+            "phi_ef": phi_ef_used,
+            "second_order_status": second_order_status,
+            "Mx_Rd_kNm": round(Mx_Rd, 1),
+            "My_Rd_kNm": round(My_Rd, 1),
+            "moment_method": biaxial_method,
             "moment_utilization": round(moment_utilization, 3) if moment_utilization != float("inf") else None,
             "moment_status": moment_status,
             "audit": audit.as_dict(),
             "limitations": [
-                "Moment-axial interaction uses a simplified straight-line (linear) approximation between pure-axial "
-                "and an approximate pure-moment capacity — not a full strain-compatibility N-Mx-My interaction diagram. "
-                "The approximate pure-moment capacity only counts the steel couple (tension+compression bars) and "
-                "ignores concrete's own contribution to moment resistance, so this check is deliberately conservative: "
-                "a marginal FAIL here does not necessarily mean a full column design chart would also fail it — it "
-                "means the section should be checked with one before construction. Treat a close-to-1.0 utilization "
-                "the same way.",
+                "Moment-axial interaction is a rectangular stress-block / plane-strain section analysis with "
+                "elastic-perfectly-plastic reinforcement. It does not model confinement, concrete tensile strength, "
+                "buckling of bars, or the full biaxial interaction surface; the code's simplified biaxial rule is "
+                "applied on top of the uniaxial capacities.",
                 "First-order applied moments (Mx, My) are only as good as the values supplied — this module does not "
                 "run a full frame analysis to derive them; if left at zero, only the code-mandated minimum-eccentricity "
                 "moment is checked.",
-                "Second-order (slenderness) moments are implemented for braced BS 8110 columns only (simplified K=1, "
-                "which is conservative for lightly loaded slender columns). EC2 second-order effects and any unbraced/sway "
-                "column are not implemented.",
+                "Second-order moments: BS 8110 uses the simplified additional-moment method (Cl. 3.8.3.1, K=1); "
+                "EC2 uses the nominal-curvature method (5.8.8) with phi_ef = 2.0, c = 10 and the default Kr/Kphi "
+                "assumptions. Unbraced/sway columns are not implemented, and the EC2 creep/end-moment assumptions "
+                "must be confirmed against the project.",
                 "The EC2 axial/moment capacity implementation uses alpha_cc=0.85, gamma_c=1.5 and gamma_s=1.15.",
             ],
         }

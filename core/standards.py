@@ -391,6 +391,94 @@ class Eurocode2:
         }
 
 
+def design_flexure_T(
+    code: str, M: float, b_eff: float, b_w: float, h_f: float, d: float,
+    h: float, f_c: float, f_y: float, d_prime: float = 0.0,
+) -> Dict[str, float | str]:
+    """Rectangular-stress-block flexure for a T-section in sagging bending.
+
+    The neutral axis is first assumed within the flange; if it falls below
+    the flange, the full T-section equilibrium is solved. Hogging bending
+    should still use the rectangular web section.
+    """
+    for name, value in (("b_eff", b_eff), ("b_w", b_w), ("h_f", h_f), ("d", d), ("h", h)):
+        _require_positive(name, value)
+    if b_eff < b_w:
+        raise ValueError("Effective flange width cannot be less than the web width.")
+    if h_f >= d:
+        raise ValueError("Flange thickness must be less than the effective depth.")
+
+    if code == "BS8110":
+        f_cd = 0.67 * f_c / 1.5
+        lam = 0.9
+        f_yd = 0.95 * f_y
+        min_pct = 0.0032 if f_y <= 250 else 0.0018
+        As_min = min_pct * b_w * h
+        x_limit = 0.50 * d
+    elif code == "Eurocode 2":
+        if f_c > 50:
+            raise ValueError("T-beam design currently supports fck <= 50 MPa.")
+        f_cd = 0.85 * f_c / 1.5
+        lam = 0.8
+        f_yd = f_y / 1.15
+        f_ctm = 0.30 * f_c ** (2.0 / 3.0)
+        As_min = max(0.26 * f_ctm / f_y, 0.0013) * b_w * d
+        x_limit = 0.45 * d
+    else:
+        raise ValueError(f"Unsupported design code: {code}")
+
+    M_Nmm = abs(M) * 1e6
+    over_reinforced = False
+
+    # Assume the neutral axis is within the flange.
+    A = f_cd * b_eff * lam ** 2 / 2.0
+    B = -f_cd * b_eff * lam * d
+    C = M_Nmm
+    disc = B * B - 4.0 * A * C
+    if disc < 0:
+        raise ValueError("Section is inadequate for the applied T-beam moment.")
+    x_root = (-B - math.sqrt(disc)) / (2.0 * A)
+
+    if x_root <= h_f + 1e-9:
+        x = x_root
+        F_c = f_cd * b_eff * lam * x
+        As_req = F_c / f_yd
+        section_type = "T-beam (neutral axis in flange)"
+    else:
+        F_f = f_cd * (b_eff - b_w) * h_f
+        A2 = f_cd * b_w * lam ** 2 / 2.0
+        B2 = -f_cd * b_w * lam * d
+        C2 = M_Nmm - F_f * (d - h_f / 2.0)
+        disc2 = B2 * B2 - 4.0 * A2 * C2
+        if disc2 < 0:
+            raise ValueError("Section is inadequate for the applied T-beam moment.")
+        r1 = (-B2 - math.sqrt(disc2)) / (2.0 * A2)
+        r2 = (-B2 + math.sqrt(disc2)) / (2.0 * A2)
+        candidates = [r for r in (r1, r2) if h_f <= r <= d / lam + 1e-9]
+        if not candidates:
+            raise ValueError("The T-beam neutral axis lies outside the valid range.")
+        x = min(candidates)
+        F_w = f_cd * b_w * lam * x
+        As_req = (F_f + F_w) / f_yd
+        section_type = "T-beam (neutral axis in web)"
+
+    if x > x_limit:
+        over_reinforced = True
+        section_type += " — compression zone exceeds the ductility limit"
+
+    As_req = max(As_req, As_min)
+    return {
+        "K": 0.0,
+        "z": d - lam * x / 2.0,
+        "As_req": As_req,
+        "As_comp": 0.0,
+        "As_min": As_min,
+        "x": x,
+        "section_type": section_type,
+        "over_reinforced": over_reinforced,
+    }
+
+
 def design_flexure(code: str, **kwargs):
     if code == "BS8110":
         return BS8110.design_flexure(**kwargs)

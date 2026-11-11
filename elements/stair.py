@@ -3,6 +3,7 @@ from typing import Dict
 
 from core.rebar import RebarSelector
 from core.results import CheckStatus, DesignAudit
+from core.serviceability import ec2_crack_width
 from core.standards import BS8110, Eurocode2, design_flexure, load_factors
 
 
@@ -28,7 +29,7 @@ class StairFlight:
         qk_live: float = 3.0,          # Imposed live load (kN/m2)
         f_cu: float = 25.0,            # Concrete cube strength (BS) / fck (EC2)
         f_y: float = 460.0,            # Rebar yield strength (N/mm2)
-        code: str = "BS8110",
+        code: str = "BS8110", psi2: float = 0.3, crack_limit: float = 0.30,
     ):
         for name, value in (("going", going), ("rise", rise), ("waist", waist),
                             ("flight_going_len", flight_going_len), ("landing_len", landing_len)):
@@ -53,6 +54,8 @@ class StairFlight:
         self.f_cu = f_cu
         self.f_y = f_y
         self.code = code
+        self.psi2 = psi2
+        self.crack_limit = crack_limit
         self.bar_dia = 12
 
         self.d = self.waist - self.cover - (self.bar_dia / 2.0)
@@ -144,6 +147,24 @@ class StairFlight:
         # End reactions to the landing/floor beams (kN per metre stair width).
         reaction_to_beam = total_load / 2.0
 
+        # Quasi-permanent crack width (EC2 only).
+        w_qp = (
+            (self.landing_gk + self.psi2 * self.qk) * self.l_landing
+            + (self.flight_gk + self.psi2 * self.qk) * self.l_flight
+        ) / L_eff
+        M_qp = w_qp * L_eff ** 2 / 8.0
+        if self.code == "Eurocode 2" and main_rebar["As_prov"] > 0:
+            d_actual = self.waist - self.cover - main_rebar["bar_diameter"] / 2.0
+            cw = ec2_crack_width(
+                M_qp, 1000, self.waist, d_actual, main_rebar["As_prov"],
+                main_rebar["bar_diameter"], self.cover, self.f_cu, self.f_y, self.crack_limit,
+            )
+            crack_status = cw["status"]
+        else:
+            cw = {"wk_mm": None, "status": "NOT CHECKED",
+                  "message": "BS 8110 crack width is not implemented; only the EC2 method is available."}
+            crack_status = "NOT CHECKED"
+
         audit = DesignAudit()
         audit.add(
             "Flexural reinforcement",
@@ -169,6 +190,15 @@ class StairFlight:
             demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
             message=defl_note,
         )
+        audit.add(
+            "Crack width (quasi-permanent)",
+            CheckStatus.PASS if crack_status == "PASS"
+            else CheckStatus.FAIL if crack_status == "FAIL"
+            else CheckStatus.NOT_CHECKED,
+            demand=round(cw["wk_mm"], 3) if cw["wk_mm"] is not None else None,
+            capacity=self.crack_limit if self.code == "Eurocode 2" else None,
+            unit="mm", message=cw.get("message", ""),
+        )
 
         return {
             "analysis_method": "Length-weighted average UDL on an equivalent simply-supported span",
@@ -178,6 +208,9 @@ class StairFlight:
             "w_avg_kN_m": round(w_avg, 2),
             "M_u_kNm": round(M_u, 2),
             "V_u_kN_m": round(V_u, 2),
+            "M_qp_kNm": round(M_qp, 2),
+            "wk_mm": round(cw["wk_mm"], 3) if cw["wk_mm"] is not None else None,
+            "crack_status": crack_status,
             "main_rebar": main_rebar,
             "dist_rebar": dist_rebar,
             "As_req_mm2_m": round(flex_res["As_req"], 1),
@@ -193,6 +226,7 @@ class StairFlight:
                 "The stair is idealised as a simply-supported equivalent span made from the flight and landing "
                 "lengths; actual support conditions and the flight/landing junction must be designed separately.",
                 "The reported span/depth result is a simplified screening check, not a full long-term deflection calculation.",
+                "EC2 crack width (7.3.4) is checked under the quasi-permanent combination. BS 8110 crack width is NOT CHECKED.",
                 "No torsion, diaphragm action, landing-beam design or support detailing is generated.",
             ],
         }

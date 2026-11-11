@@ -142,7 +142,9 @@ def test_ec2_slender_column_is_not_classified_as_short():
     assert res["is_short"] is False
     assert res["slenderness_x"] > res["lambda_lim"]
     statuses = {c["name"]: c["status"] for c in res["audit"]["checks"]}
-    assert statuses["Slenderness — second-order moment"] == "NOT CHECKED"
+    assert statuses["Slenderness — second-order moment"] == "WARNING"
+    assert res["M2_x_kNm"] > 0
+    assert res["second_order_status"] == "INCLUDED (EC2)"
 
 
 def test_column_bar_layouts_return_the_requested_bar_count():

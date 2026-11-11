@@ -124,7 +124,8 @@ def _linspace(a: float, b: float, n: int) -> List[float]:
 
 def generate_beam_dxf(
     b_res: Dict, b_w: float, h_overall: float, cover: float, code: str,
-    project_name: str = "", engineer_name: str = ""
+    project_name: str = "", engineer_name: str = "",
+    flange_width: float = 0.0, flange_thickness: float = 0.0,
 ) -> bytes:
     doc, msp = _new_doc()
 
@@ -141,6 +142,15 @@ def generate_beam_dxf(
             [(ox, oy), (ox + b_w, oy), (ox + b_w, oy + h_overall), (ox, oy + h_overall), (ox, oy)],
             dxfattribs={"layer": "OUTLINE"}
         )
+        if flange_width and flange_thickness:
+            fx0 = ox - (flange_width - b_w) / 2.0
+            fx1 = fx0 + flange_width
+            msp.add_lwpolyline(
+                [(fx0, oy + h_overall), (fx1, oy + h_overall),
+                 (fx1, oy + h_overall + flange_thickness), (fx0, oy + h_overall + flange_thickness),
+                 (fx0, oy + h_overall)],
+                dxfattribs={"layer": "OUTLINE"}
+            )
         lx0, ly0 = ox + cover, oy + cover
         lx1, ly1 = ox + b_w - cover, oy + h_overall - cover
         msp.add_lwpolyline([(lx0, ly0), (lx1, ly0), (lx1, ly1), (lx0, ly1), (lx0, ly0)],
