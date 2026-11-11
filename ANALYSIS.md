@@ -3,10 +3,46 @@
 **Review date:** 11 November 2026  
 **Repository:** `lone-sudo/structural-engineering-suite`  
 **Reviewed revision:** `9dba31e` (multi-span beam analysis)  
-**Fixes applied in this pass:** `f3a1d6e` on `main`, tag `v29`  
+**Fixes applied in this pass:** `f3a1d6e` on `main`, tag `v29`; the Phase-1
+design-depth work follows in the v30 commits.  
 **Scope of review:** every source module, the test suite, the documentation, the
 UI workflow, the exported DXF/HTML/BBS artefacts, and the engineering
 formulae against BS 8110-1:1997 and EN 1992-1-1.
+
+> ### v30 addendum — Phase-1 design depth implemented
+>
+> The following items from §8 Phase 1 are now implemented and tested:
+>
+> - **Column N-M interaction** is a real strain-compatibility section analysis
+>   (`core/section_analysis.py`): rectangular stress block, plane strain,
+>   elastic-perfectly-plastic bars, actual bar layout, uniaxial capacities at
+>   the applied axial load. BS 8110 uses the equivalent-uniaxial β rule; EC2
+>   uses the 5.8.9(4) exponent rule, both on the actual capacities.
+> - **EC2 second-order columns** use the nominal-curvature method
+>   (EN 1992-1-1 5.8.8) with explicit `φef = 2.0`, `c = 10` and default
+>   `Kr`/`Kφ` assumptions. Slender columns now get a real M2 and a WARNING
+>   (not a silent `NOT CHECKED`).
+> - **EC2 crack width** (7.3.4) is checked under the quasi-permanent
+>   combination for beams, one-way slabs, two-way slabs and stairs, using a
+>   cracked-section steel stress. BS 8110 crack width remains `NOT CHECKED`.
+> - **EC2 anchorage/lap lengths** (8.4/8.7) are computed and reported for beam
+>   bars, and the BBS uses them for cut lengths. Available embedment is still
+>   not checked against the actual support/drawing.
+> - **T-beam sagging flexure** is implemented for an engineer-supplied
+>   effective flange width and slab thickness; hogging remains the
+>   rectangular web. L-beams and web/flange shear are not implemented.
+> - **Tests** increased from 69 to 84, including section-capacity,
+>   crack-width, anchorage, T-beam and EC2 second-order regressions.
+>
+> Updated scorecard: correctness within scope **8/10**, design completeness
+> **6/10**, verification **5/10**, overall as a preliminary tool **7/10**,
+> overall as a full analysis model **3.5/10**.
+>
+> Still open after v30: L-beams, two-layer beam detailing, web/flange shear,
+> full BS 8110 crack width, curtailment/hooks/bends, flat slabs, punching with
+> moment transfer, fire resistance, lateral/frame analysis, whole-building
+> tributary take-down, and independent verification of the remaining eight
+> BS 8110 Table 3.14 panel cases.
 
 ---
 
@@ -125,7 +161,7 @@ app.py  (Streamlit UI, session state, project save/load, exports)
 │   ├── dxf_reader.py      grid extraction from DXF
 │   └── pdf_reader.py      text/render extraction from PDF
 │
-└── tests/                 69 tests (theory, RCC94 benchmark, regressions)
+└── tests/                 84 tests (theory, RCC94 benchmark, regressions)
 ```
 
 The design is sensibly layered: `<element>.design_*()` returns a dictionary with
@@ -185,8 +221,8 @@ overclaiming; the problems were genuine engineering mistakes, not marketing.
 
 The original suite already tested engineering theory rather than just code
 paths (two-span and three-span closed-form results, an RCC94 slab benchmark,
-load-path regressions). That is the right instinct. This pass added 18 tests
-covering the defects below.
+load-path regressions). That is the right instinct. This review pass added 33
+tests covering the defects below and the v30 Phase-1 features.
 
 ---
 
@@ -600,39 +636,41 @@ code table before those cases are relied on. **Action:** transcribe the table
 into a spreadsheet with source page references and add a benchmark for every
 panel type.
 
-**O-02. Column biaxial interaction is a crude approximation.**
-The pure-moment capacity `M0` counts only the steel couple
-(`As/2 × (d − d')`) and ignores the concrete’s moment contribution. The
-interaction is a straight-line reduction `M_allow = M0 (1 − N/NRd)`. This is
-conservative for many cases but can be non-conservative in others, and it is
-not a strain-compatibility interaction diagram. The BS 8110 `β` method is a
-recognised simplification but requires a real `M0`/chart. **Action:** implement
-a fibre/strain-compatibility N-M interaction and verify against published
-column charts.
+**O-02. (v30: substantially closed) Column biaxial interaction.**
+The v30 section analysis replaces the steel-couple-only `M0` and the
+straight-line interaction with a real uniaxial N-M boundary at the applied
+axial load. The *biaxial combination* still uses the code simplification
+(BS 8110 β rule or EC2 exponent rule) rather than a full biaxial surface.
+**Remaining action:** verify against published column charts and, for
+high-utilization columns, consider a full biaxial section search.
 
-**O-03. EC2 second-order column design is not implemented.**
-The classification is now correct, but a slender EC2 column returns
-`NOT CHECKED` for second-order moments. Since many 200–300 mm columns in
-3 m storeys are slender under EC2, this blocks a large share of real EC2
-columns. **Action:** implement EN 1992-1-1 5.8.8 nominal curvature
-(`e2`, `Kr`, `Kφ`, `1/r0`), with explicit creep and `rm` assumptions.
+**O-03. (v30: closed, with assumptions) EC2 second-order column design.**
+EN 1992-1-1 5.8.8 nominal curvature is implemented with `φef = 2.0`,
+`c = 10`, and the default `Kr`/`Kφ` assumptions. The creep ratio and
+end-moment ratio are not project inputs, so the result is a design aid, not a
+final EC2 second-order verification. **Remaining action:** expose `φef` and
+`rm` as inputs and verify against a commercial EC2 column design.
 
 ### P1 — significant scope gaps for a “capable” tool
 
-**O-04. No crack-width or SLS stress design.**
-There is no `w_k` check (EC2 7.3 / BS 8110 3.8), no quasi-permanent combination,
-no `σs`/`σc` limits, and no long-term deflection calculation. The span/depth
-screen is not a substitute.
+**O-04. (v30: EC2 partially closed; BS open) Crack width and SLS stress.**
+EC2 7.3.4 crack width is now checked under the quasi-permanent combination
+for beams, slabs and stairs, with a cracked-section steel stress. BS 8110
+crack width (3.8) is still `NOT CHECKED`; long-term deflection and explicit
+`σc` limits are still not implemented. The span/depth screen is not a
+substitute.
 
-**O-05. No anchorage, lap, curtailment, hook or bend design.**
-The BBS cut lengths are assumptions. The DXF title block says so, but the tool
-does not compute `l_bd`, `l_0`, lap lengths, curtailment points or anchorage at
-supports.
+**O-05. (v30: EC2 lengths reported; detailing still open) Anchorage and laps.**
+EC2 8.4/8.7 required anchorage and lap lengths are computed and used for BBS
+cut lengths. Available embedment at supports/laps, curtailment points, hooks,
+bends, and BS 8110 anchorage/lap rules are still not checked.
 
-**O-06. No flanged sections (T/L-beams).**
-Only rectangular sections are designed. Real beam-slab systems almost always
-use an effective flange in the sagging region; ignoring it is conservative for
-flexure but can be unconservative for shear and detailing.
+**O-06. (v30: sagging T-beams implemented; L-beams/web shear open) Flanged sections.**
+T-beam sagging flexure is now implemented for an engineer-supplied effective
+flange width and slab thickness, with the neutral axis solved in the flange or
+web. The effective width is not auto-derived, L-beams are not supported, and
+shear between the web and flange (EC2 6.2.4 / BS 8110 3.4.5) is not checked.
+Hogging still uses the rectangular web.
 
 **O-07. No flat slabs, torsion or punching with moment transfer.**
 Two-way slabs are on beams/walls. Flat slabs, edge columns, unbalanced moments
@@ -716,7 +754,7 @@ reproducible years later; add a lock file (pip-tools/uv) and record the resolved
 versions in the calculation report.
 
 **O-23. Test coverage and V&V.**
-69 tests is a good start, CI was added in this pass, but there is no coverage
+84 tests is a good start, CI was added in this pass, but there is no coverage
 measurement, no independent comparison against commercial software, and no
 systematic verification of every code table/formula. The one external benchmark
 (RCC94) is excellent and should be the model for a full validation set.
@@ -879,7 +917,16 @@ This is a genuine external check and should be extended to all panel types.
 - DXF grid extraction;
 - EC2 report `fck` label;
 - 12-bar DXF;
-- JSON numeric round-trip.
+- JSON numeric round-trip;
+- section-analysis pure axial and pure moment capacity;
+- section-analysis cross-check against the BS 8110 flexure formula;
+- biaxial utilization monotonicity;
+- EC2 nominal-curvature second-order moment;
+- cracked-section stress vs moment;
+- EC2 crack width for beams and slabs;
+- BS 8110 crack width honestly `NOT CHECKED`;
+- EC2 anchorage/lap length scaling;
+- BBS beam cut length includes anchorage.
 
 ### 9.4 How to reproduce
 

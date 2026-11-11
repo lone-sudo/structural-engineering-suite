@@ -1,5 +1,49 @@
 # Changelog
 
+## v30 — Phase-1 design depth: strain-compatibility columns, EC2 second order, crack width, anchorage
+
+Implements the highest-priority remaining items from `ANALYSIS.md` §8.
+
+**Columns**
+
+- New `core/section_analysis.py`: rectangular stress-block / plane-strain
+  N-M interaction with the actual bar layout and code material laws.
+  Replaces the steel-couple-only pure-moment approximation and the
+  straight-line interaction.
+- BS 8110 biaxial bending now applies the Cl. 3.8.4.5 β rule to *actual*
+  uniaxial capacities; EC2 uses the 5.8.9(4) exponent rule on actual
+  capacities.
+- EC2 slender columns now use the EN 1992-1-1 5.8.8 nominal-curvature
+  second-order moment (`φef = 2.0`, `c = 10`, default `Kr`/`Kφ`). Slender
+  columns return a real M2 and a WARNING instead of `NOT CHECKED`.
+- Result now reports `Mx_Rd`, `My_Rd`, `M2_x/y`, `second_order_status` and
+  the interaction method.
+
+**Serviceability**
+
+- New `core/serviceability.py`: cracked-section steel stress and EC2 7.3.4
+  crack width under the quasi-permanent combination.
+- Beams, one-way slabs, two-way slabs and stairs report `wk` and a
+  PASS/FAIL/NOT CHECKED crack-width status. BS 8110 crack width remains
+  explicitly `NOT CHECKED`.
+
+**Beams**
+
+- T-beam sagging flexure: an optional effective flange width and slab
+  thickness per span are solved as a T-section (neutral axis in flange or
+  web), with a ductility-limit flag. Hogging remains the rectangular web.
+- T-beam flange geometry is shown in the section DXF.
+
+**Detailing**
+
+- New `core/detailing.py`: EC2 8.4 basic/design anchorage length and 8.7 lap
+  length, with conservative default α factors.
+- Beams report `lbd`/`l0` for span and support bars; the BBS uses them for
+  beam cut lengths. Available embedment is still a drawing-review item.
+
+**Tests:** 84 passing (was 69), including section-capacity, second-order,
+crack-width, anchorage, T-beam and BBS regressions.
+
 ## v29 — Engineering-hardening review: safety fixes, EC2 gaps closed, importer and licence cleanup
 
 A full adversarial review of the calculation engine (see `ANALYSIS.md`).

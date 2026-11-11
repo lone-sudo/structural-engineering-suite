@@ -35,10 +35,13 @@ licence store). See `.env.example`.
   width/depth per span, a real slope-deflection matrix solution, and code
   pattern loading with the required `1.0Gk` minimum load on unloaded spans.
   BS 8110 and EC2 flexure, shear, minimum steel, span/depth deflection
-  screening, one-layer bar-fit checks and link schedules.
+  screening, one-layer bar-fit checks and link schedules. Optional T-beam
+  sagging design uses an engineer-supplied effective flange width/thickness.
 - **Columns** — axial take-down, BS 8110/EC2 axial resistance, minimum
   eccentricity, BS 8110 slender-column additional moments, EC2 slenderness
-  (`λ` vs `λlim`), simplified biaxial interaction, and bar/links selection.
+  (`λ` vs `λlim`) and nominal-curvature second-order moments, a
+  strain-compatibility N-M interaction, code biaxial combination, and
+  bar/links selection.
 - **Pad footings** — service bearing sizing, ULS flexure, one-way shear and
   punching screening (BS 8110 1.5d / EC2 2d), buried-pad cover, and a
   rectangular-projection check.
@@ -47,7 +50,10 @@ licence store). See `.env.example`.
   screening. Selecting EC2 changes the load factors and resistance, not the
   BS coefficient table (stated explicitly in the result).
 - **One-way slabs and stairs** — simply-supported strip/flight checks covering
-  flexure, shear, distribution steel and deflection.
+  flexure, shear, distribution steel, deflection and EC2 crack width.
+- **Serviceability** — EC2 cracked-section steel stress and crack width
+  (7.3.4) under the quasi-permanent combination for beams, slabs and stairs;
+  EC2 anchorage and lap lengths (8.4/8.7) are reported for detailing.
 - **Whole-building representative bay** — slab → continuous beam →
   representative internal column → pad footing, with a preliminary BBS,
   steel quantity/cost estimate and HTML/DXF exports.
@@ -63,16 +69,20 @@ licence store). See `.env.example`.
 | Beam deflection (span/d screening) | ✅ | ✅ |
 | Beam bar fit / links | ✅ (one layer) | ✅ (one layer) |
 | Column axial resistance | ✅ | ✅ |
-| Column slenderness | ✅ (additional moment) | ⚠️ classified, second-order NOT CHECKED |
-| Column biaxial interaction | ⚠️ simplified | ⚠️ simplified |
+| Column slenderness | ✅ (additional moment) | ✅ nominal curvature (φef = 2.0 assumption) |
+| Column N-M interaction | ✅ strain compatibility | ✅ strain compatibility |
+| Column biaxial interaction | ⚠️ code equivalent-uniaxial rule | ⚠️ code exponent rule |
 | Footing bearing / flexure | ✅ | ✅ |
 | Footing one-way shear | ✅ (unreinforced) | ✅ (unreinforced) |
 | Footing punching | ⚠️ 1.5d screening | ✅ 2d unreinforced |
 | Two-way slab moments | ✅ BS Table 3.14 | ⚠️ BS coefficients used |
 | Slab shear / deflection | ✅ | ✅ |
 | Stair flexure / shear / deflection | ✅ | ✅ |
-| Crack widths, anchorage, laps, curtailment | ❌ | ❌ |
-| T/L-beams, flat slabs, torsion, lateral loads | ❌ | ❌ |
+| Crack width | ❌ | ⚠️ quasi-permanent, EC2 7.3.4 |
+| Anchorage / laps | ❌ | ⚠️ lengths reported, embedment not checked |
+| Curtailment, hooks, bends | ❌ | ❌ |
+| T-beam sagging flexure | ✅ effective flange input | ✅ effective flange input |
+| L-beams, flat slabs, torsion, lateral loads | ❌ | ❌ |
 
 ✅ implemented · ⚠️ implemented with a stated limitation · ❌ not implemented
 

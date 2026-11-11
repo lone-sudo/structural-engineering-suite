@@ -52,9 +52,9 @@ real preliminary sizing task:
 - Are there any numbers that look **wrong**, not just incomplete? (Wrong
   is a much bigger problem than incomplete — flag those first.)
 - Is anything **missing** that you'd genuinely reach for on a real
-  preliminary design — column biaxial bending is implemented (simplified),
-  but slab column moment transfer, wind/lateral loads, and a full frame
-  analysis are not yet.
+  preliminary design — column N-M interaction and EC2 second-order moments
+  are implemented, but slab-column moment transfer, flanged T-beams,
+  wind/lateral loads, and a full frame analysis are not yet.
 - Does the language and layout make sense to someone who hasn't seen the
   tool before, or does it assume too much?
 
