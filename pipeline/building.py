@@ -148,19 +148,37 @@ class BuildingModel:
         add("S02", "Slab", "Bottom Y", sy["description"], sy["bar_diameter"],
             ny, max(0.0, self.ly - 2 * cover_m))
 
+        # Top (support) slab steel — previously omitted from the BBS even
+        # when the panel generated a negative moment.
+        for tag, rb, count_across, run in (
+            ("S03", slab.get("rebar_sx_neg", {}), self.ly, self.lx),
+            ("S04", slab.get("rebar_sy_neg", {}), self.lx, self.ly),
+        ):
+            if rb.get("As_req", 0) > 0 and rb.get("bar_diameter", 0):
+                n_top = math.ceil(count_across * 1000 / rb["spacing"]) + 1
+                add(tag, "Slab", "Top support", rb["description"], rb["bar_diameter"],
+                    n_top, max(0.0, run - 2 * cover_m))
+
         beam = full_results["beam"]
         sb = beam["span_bars"]
+        spans = beam.get("spans_detail", [])
         if sb.get("bars", 0):
-            add("B01", "Beam", "Bottom span", sb["description"], sb["bar_diameter"],
-                sb["bars"], self.ly)
+            for i, span in enumerate(spans, start=1):
+                add(f"B01-{i}", "Beam", f"Bottom span {i}", sb["description"], sb["bar_diameter"],
+                    sb["bars"], float(span["length_m"]))
         tb = beam["supp_bars"]
-        if tb.get("bars", 0) and full_results["beam"]["M_support_kNm"] > 0:
-            # Preliminary 0.30L anchorage extension each side of support.
+        num_spans = int(beam.get("num_spans", len(spans) or 1))
+        if tb.get("bars", 0) and beam.get("M_support_kNm", 0) > 0 and num_spans >= 2:
+            # Preliminary 0.30L anchorage extension each side of each
+            # interior support (n-1 interior supports for n spans).
+            avg_span = (sum(float(s["length_m"]) for s in spans) / len(spans)) if spans else self.ly
             add("B02", "Beam", "Top support", tb["description"], tb["bar_diameter"],
-                tb["bars"], 0.60 * self.ly)
+                tb["bars"] * (num_spans - 1), 0.60 * avg_span)
 
         col = full_results["column"]["main_rebar"]
         if col.get("bars", 0):
+            # 3.0 m assumed storey height for the preliminary quantity; the
+            # column module does not carry the actual storey height.
             add("C01", "Column", "Longitudinal", col["description"], col["bar_diameter"],
                 col["bars"] * self.num_storeys, 3.0)
 

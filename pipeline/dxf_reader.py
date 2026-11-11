@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import io
-import ezdxf
+import re
 from typing import Dict, List, Optional
+
+import ezdxf
 
 
 class CADReader:
-    """Extracts structural grid lines, spans, and column coordinates from DXF files.
+    """Extracts structural grid lines and spans from DXF files.
 
-    Nothing here is silently invented. When a value cannot be confidently
-    detected, the corresponding field is returned as None and the "confidence"
-    or "unit_source" fields explain why, so the caller (app.py) can show the
-    engineer exactly what was read versus what still needs manual entry.
+    The previous implementation treated *every* LINE between 2 m and 15 m as
+    a possible span, then returned a sorted set of line lengths. That meant
+    walls, title-block lines and dimension strings could all be presented as
+    "detected spans" with false confidence. This version only looks for
+    axis-aligned lines and derives the grid from repeated X/Y coordinates,
+    which is how a structural grid is actually drawn. If no clear grid is
+    found it returns ``None`` rather than a list of arbitrary lengths.
     """
 
     # DXF $INSUNITS codes we can map with confidence; 0 = unspecified.
@@ -22,6 +27,19 @@ class CADReader:
         5: 0.01,        # centimetres
         6: 1.0,         # metres
     }
+
+    @staticmethod
+    def _cluster(values: List[float], tol: float = 0.05) -> List[float]:
+        if not values:
+            return []
+        values = sorted(values)
+        groups: List[List[float]] = [[values[0]]]
+        for v in values[1:]:
+            if abs(v - groups[-1][-1]) <= tol:
+                groups[-1].append(v)
+            else:
+                groups.append([v])
+        return [round(sum(g) / len(g), 4) for g in groups]
 
     @staticmethod
     def parse_dxf_stream(file_bytes: bytes) -> Dict:
@@ -38,49 +56,72 @@ class CADReader:
         unit_to_m: Optional[float] = CADReader._INSUNITS_TO_METRES.get(insunits) if insunits else None
         unit_source = (
             f"DXF header $INSUNITS={insunits}" if unit_to_m is not None
-            else "not declared in DXF header — lengths shown are a best-effort heuristic guess and MUST be verified"
+            else "not declared in DXF header — units guessed from line lengths and MUST be verified"
         )
 
-        lines_raw = []
-        points = []
-        entity_count = 0
-
+        raw_lines = []
+        inserts = []
         for entity in msp:
-            entity_count += 1
             if entity.dxftype() == "LINE":
-                start = entity.dxf.start
-                end = entity.dxf.end
+                start, end = entity.dxf.start, entity.dxf.end
                 dx = abs(end.x - start.x)
                 dy = abs(end.y - start.y)
-                length = (dx**2 + dy**2) ** 0.5
-                lines_raw.append(length)
-            elif entity.dxftype() in ["POINT", "INSERT"]:
-                try:
-                    pt = (entity.dxf.insert.x, entity.dxf.insert.y)
-                except AttributeError:
-                    try:
-                        pt = (entity.dxf.location.x, entity.dxf.location.y)
-                    except AttributeError:
-                        continue
-                points.append(pt)
+                raw_lines.append((dx, dy, start.x, start.y, end.x, end.y))
+            elif entity.dxftype() in ("INSERT", "POINT"):
+                inserts.append(entity)
 
-        if unit_to_m is not None:
-            lengths_m = [l * unit_to_m for l in lines_raw]
-            confidence = "declared"
+        # Guess the drawing unit only when the header is silent.
+        if unit_to_m is None:
+            max_len = max((max(dx, dy) for dx, dy, *_ in raw_lines), default=0.0)
+            scale = 0.001 if max_len > 50.0 else 1.0
         else:
-            # Best-effort fallback only when the header doesn't say: assume
-            # values over 50 drawing units are millimetres, otherwise metres.
-            lengths_m = [(l / 1000.0 if l > 50 else l) for l in lines_raw]
-            confidence = "guessed"
+            scale = unit_to_m
 
-        filtered_spans = sorted({round(v, 2) for v in lengths_m if 2.0 <= v <= 15.0})
+        x_coords: List[float] = []
+        y_coords: List[float] = []
+        for dx, dy, x1, y1, x2, y2 in raw_lines:
+            if dx <= 1e-9 and dy > 1.0:
+                x_coords.append(x1 * scale)
+            elif dy <= 1e-9 and dx > 1.0:
+                y_coords.append(y1 * scale)
 
-        detected = bool(filtered_spans)
+        xs = CADReader._cluster(x_coords)
+        ys = CADReader._cluster(y_coords)
+
+        def spacings(coords: List[float]) -> List[float]:
+            diffs = [round(b - a, 3) for a, b in zip(coords, coords[1:])]
+            return sorted({d for d in diffs if 1.5 <= d <= 15.0})
+
+        x_spans = spacings(xs)
+        y_spans = spacings(ys)
+
+        detected = bool(x_spans or y_spans)
+        detected_spans = None
+        if x_spans and y_spans:
+            detected_spans = [x_spans[0], y_spans[0]]
+        elif x_spans:
+            detected_spans = [x_spans[0], x_spans[0]]
+        elif y_spans:
+            detected_spans = [y_spans[0], y_spans[0]]
+
+        column_blocks = [
+            e for e in inserts
+            if e.dxftype() == "INSERT" and "COL" in str(getattr(e.dxf, "name", "")).upper()
+        ]
+
         return {
-            "total_entities": entity_count,
-            "detected_spans": filtered_spans[:6] if detected else None,
+            "total_entities": len(list(msp)),
+            "detected_spans": detected_spans,
+            "x_spans": x_spans[:8],
+            "y_spans": y_spans[:8],
             "spans_detected": detected,
-            "unit_confidence": confidence,
+            "unit_confidence": "declared" if unit_to_m is not None else "guessed",
             "unit_source": unit_source,
-            "total_columns_found": len(points),
+            "grid_x_lines": len(xs),
+            "grid_y_lines": len(ys),
+            "total_columns_found": len(column_blocks) or len(inserts),
+            "detection_note": (
+                "Spans are derived from repeated X/Y coordinates of axis-aligned lines, "
+                "not from arbitrary line lengths. Confirm against the drawing title block."
+            ),
         }

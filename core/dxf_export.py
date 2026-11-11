@@ -17,6 +17,8 @@ from typing import Dict, List, Optional, Tuple
 import ezdxf
 from ezdxf.enums import TextEntityAlignment
 
+from core.rebar import RebarSelector
+
 _LAYERS = {
     "OUTLINE": {"color": 5},       # blue
     "REBAR-MAIN": {"color": 1},    # red
@@ -213,13 +215,10 @@ def generate_column_dxf(
 
     cx0, cx1 = cover + link_dia + dia / 2.0, b - cover - link_dia - dia / 2.0
     cy0, cy1 = cover + link_dia + dia / 2.0, h - cover - link_dia - dia / 2.0
-    coords = [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)]
-    if n == 6:
-        coords += [(b / 2.0, cy0), (b / 2.0, cy1)]
-    elif n == 8:
-        coords += [(b / 2.0, cy0), (b / 2.0, cy1), (cx0, h / 2.0), (cx1, h / 2.0)]
-    elif n == 10:
-        coords += [(b / 2.0, cy0), (b / 2.0, cy1)] + [(cx0, y) for y in _linspace(cy0, cy1, 4)[1:3]] + [(cx1, y) for y in _linspace(cy0, cy1, 4)[1:3]]
+    try:
+        coords = RebarSelector.column_bar_positions(n, b, h, cover, link_dia, dia)
+    except (ValueError, TypeError):
+        coords = [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)]
     for x, y in coords:
         msp.add_circle((x, y), dia / 2.0, dxfattribs={"layer": "REBAR-MAIN"})
 

@@ -54,10 +54,10 @@ FAQ: List[Dict[str, str]] = [
         "keywords": "eurocode ec2 shear deflection not checked why missing",
         "question": "Why does Eurocode 2 show some checks as NOT CHECKED that BS8110 doesn't?",
         "answer": (
-            "The two codes aren't implemented to identical depth everywhere. For example, EC2's second-order "
-            "(slenderness) column moment and its span/depth deflection screening are not implemented yet, "
-            "while the BS8110 equivalents are. Rather than approximate an EC2 check with a BS8110-style formula "
-            "and risk it being wrong for that code, the tool marks it NOT CHECKED and says so plainly."
+            "The two codes aren't implemented to identical depth everywhere. EC2 span/depth deflection "
+            "screening and shear are implemented, but EC2 second-order (nominal curvature) column moments "
+            "are not. Rather than approximate an EC2 check with a BS8110-style formula and risk it being "
+            "wrong for that code, the tool marks the missing check NOT CHECKED and says so plainly."
         ),
     },
     {
@@ -152,8 +152,9 @@ FAQ: List[Dict[str, str]] = [
         "keywords": "license pin login screen key access dev mode",
         "question": "Why didn't I see a login or license screen?",
         "answer": (
-            "This build has development mode enabled, which skips the license/PIN screen entirely for testing. "
-            "A production deployment would normally require a license key."
+            "The public build runs open by default — no licence key is needed to use it. A managed deployment "
+            "can switch enforcement on with RCC_REQUIRE_LICENSE=true; in that case the licence/PIN screen "
+            "appears and the deployment must also set RCC_ADMIN_KEY and a licence store."
         ),
     },
     {

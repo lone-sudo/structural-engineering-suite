@@ -26,7 +26,9 @@ cover = st.session_state.global_settings.get("cover", 25.0)
 # ==========================================
 require_access_key()
 
-if st.session_state.license_user == "Local Development Mode":
+if st.session_state.license_user == "Open Source Mode":
+    st.sidebar.caption("Open-source mode · no licence required")
+elif st.session_state.license_user == "Local Development Mode":
     st.sidebar.caption("Local development mode")
 else:
     st.sidebar.success(f"Active License: {st.session_state.license_user}")
@@ -91,13 +93,22 @@ def show_audit(audit: dict, title: str = "Design verification"):
 
 
 def download_calc_sheet(element_title: str, data: dict, key: str):
-    """Standalone printable calc-sheet download for a single design module."""
+    """Standalone printable calc-sheet download for a single design module.
+
+    Uses the settings stamped on the result, not whatever happens to be in
+    the sidebar now, so a calc sheet can never silently acquire a different
+    code or material grade from the one that was actually used.
+    """
     from core.reporter import StructuralReporter
     project_name = st.session_state.get("project_name", "")
     engineer_name = st.session_state.get("engineer_name", "")
+    stamped = (data or {}).get("_design_settings", {})
     html = StructuralReporter.generate_single_element_report(
-        element_title, data, code=code_choice, f_cu=f_cu, f_y=f_y,
-        project_name=project_name, engineer_name=engineer_name
+        element_title, data,
+        code=stamped.get("code", code_choice),
+        f_cu=stamped.get("f_cu", f_cu),
+        f_y=stamped.get("f_y", f_y),
+        project_name=project_name, engineer_name=engineer_name,
     )
     st.download_button(
         f"📄 Download {element_title} calc sheet (HTML)", data=html,
@@ -126,6 +137,7 @@ if "project_data" not in st.session_state:
         "span_y": 5.0,
         "slab_thick": 150.0,
         "pad_dim": 1350.0,
+        "pad_dim_detected": False,
         "fcu": 25.0,
         "fy": 460.0,
         # Default structural grid: 2 bays in X × 2 bays in Y.
@@ -271,6 +283,7 @@ with st.sidebar.expander("💾 Save / load project"):
     import json
 
     def _build_project_save() -> str:
+        from core.persistence import json_safe
         payload = {
             "global_settings": st.session_state.global_settings,
             "project_name": st.session_state.get("project_name", ""),
@@ -279,7 +292,7 @@ with st.sidebar.expander("💾 Save / load project"):
             "design_results": st.session_state.design_results,
             "design_inputs": st.session_state.design_inputs,
         }
-        return json.dumps(payload, indent=2, default=str)
+        return json.dumps(json_safe(payload), indent=2)
 
     st.download_button(
         "Save project (.json)", data=_build_project_save(),
@@ -344,6 +357,9 @@ if module == "Project Dashboard":
                 n_pass = statuses.count("PASS")
                 n_fail = statuses.count("FAIL")
                 n_nc = statuses.count("NOT CHECKED") + statuses.count("WARNING")
+                if not statuses:
+                    st.warning("⚠️ No automated checks in this result — review manually.")
+                    continue
                 if n_fail > 0:
                     st.error(f"❌ {n_fail} failed check(s)")
                 elif n_nc > 0:
@@ -377,7 +393,10 @@ if module == "Project Dashboard":
         lp1, lp2, lp3 = st.columns(3)
         lp1.metric("Beam → Column reaction", f"{beam_r['reaction_gk_to_column_kN']:.1f} kN Gk" if beam_r else "—")
         lp2.metric("Column → Footing axial", f"{col_r['N_serv_to_footing_kN']:.1f} kN service" if col_r else "—")
-        lp3.metric("Footing size", f"{foot_r['pad_L']:.2f} × {foot_r['pad_B']:.2f} m" if foot_r else "—")
+        lp3.metric(
+            "Footing size",
+            f"{foot_r.get('pad_L', 0):.2f} × {foot_r.get('pad_B', 0):.2f} m" if foot_r else "—",
+        )
         if beam_r and col_r and not st.session_state.get("_dash_note_shown"):
             pass
         st.caption(
@@ -403,6 +422,7 @@ if module == "Project Dashboard":
                 ))
             # Concatenate bodies of each standalone report into one document.
             import re as _re
+            from html import escape as _html_escape
             bodies = []
             for html in sections:
                 m = _re.search(r"<body>(.*)</body>", html, _re.DOTALL)
@@ -420,8 +440,9 @@ if module == "Project Dashboard":
                 ".notice{border:1px solid #c88;background:#fff5df;padding:14px;margin:15px 0}"
                 "hr{margin:40px 0;border:none;border-top:3px double #999}</style></head><body>"
                 f"<h1>Structural RCC Suite — Combined Project Report</h1>"
-                f"<p><strong>Project:</strong> {project_name or '—'} | <strong>Engineer:</strong> {engineer_name or '—'} | "
-                f"<strong>Code:</strong> {code_choice}</p>"
+                f"<p><strong>Project:</strong> {_html_escape(project_name or '—')} | "
+                f"<strong>Engineer:</strong> {_html_escape(engineer_name or '—')} | "
+                f"<strong>Code:</strong> {_html_escape(code_choice)}</p>"
                 + "<hr>".join(bodies) +
                 "</body></html>"
             )
@@ -515,6 +536,7 @@ elif module == "CAD / PDF Drawing Importer":
                 st.session_state.project_data["has_drawing"] = True
                 st.session_state.project_data["file_name"] = uploaded_file.name
                 st.session_state.project_data["pdf_images"] = images
+                st.session_state.project_data["pad_dim_detected"] = bool(parsed["pad_dim_detected"])
 
                 st.success(f"PDF parsed ({parsed['total_pages']} page(s)). Review every field below before use.")
 
@@ -574,23 +596,24 @@ elif module == "CAD / PDF Drawing Importer":
                 else:
                     st.caption(f"Drawing units confirmed from {dxf_info['unit_source']}.")
 
-                spans = dxf_info["detected_spans"]
+                x_spans = dxf_info.get("x_spans", [])
+                y_spans = dxf_info.get("y_spans", [])
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    _detected_field("Grid Span X", spans[0] if dxf_info["spans_detected"] else None, " m", dxf_info["spans_detected"])
+                    _detected_field("Grid Span X", x_spans[0] if x_spans else None, " m", bool(x_spans))
                 with c2:
-                    _detected_field("Grid Span Y", spans[1] if dxf_info["spans_detected"] and len(spans) > 1 else None,
-                                     " m", dxf_info["spans_detected"] and len(spans) > 1)
+                    _detected_field("Grid Span Y", y_spans[0] if y_spans else None, " m", bool(y_spans))
                 with c3:
-                    st.metric("Columns found", dxf_info["total_columns_found"])
+                    st.metric("Columns / blocks found", dxf_info["total_columns_found"])
+                st.caption(dxf_info.get("detection_note", ""))
 
                 st.markdown("#### Confirm values before syncing to design modules")
                 with st.form("dxf_confirm_form"):
                     fc1, fc2 = st.columns(2)
                     span_x_in = fc1.number_input("Span X (m)", min_value=1.0, max_value=20.0,
-                                                  value=float(spans[0]) if dxf_info["spans_detected"] else 4.0, step=0.1)
+                                                  value=float(x_spans[0]) if x_spans else 4.0, step=0.1)
                     span_y_in = fc2.number_input("Span Y (m)", min_value=1.0, max_value=20.0,
-                                                  value=float(spans[1]) if dxf_info["spans_detected"] and len(spans) > 1 else 5.0, step=0.1)
+                                                  value=float(y_spans[0]) if y_spans else 5.0, step=0.1)
                     confirmed = st.form_submit_button("Sync confirmed values to design modules")
                     if confirmed:
                         st.session_state.project_data["span_x"] = span_x_in
@@ -654,15 +677,11 @@ elif module == "Whole Building Automated Design":
             num_floors = st.number_input("Building Storeys Above Ground", value=2, min_value=1, max_value=25, step=1, help="Use 1 for a bungalow/single-storey building, 2 for ground + one upper storey, 3 for ground + two upper storeys, etc.")
         with col4:
             qa_val = st.number_input("Soil Bearing Capacity (kN/m²)", value=150.0, step=10.0)
-        ld1, ld2, ld3, ld4 = st.columns(4)
+        ld1, ld2 = st.columns(2)
         with ld1:
             slab_finish_gk = st.number_input("Slab Finishes / Partitions Gk (kN/m²)", value=1.5, min_value=0.0, step=0.25)
         with ld2:
             slab_live_qk = st.number_input("Slab Imposed Qk (kN/m²)", value=2.0, min_value=0.0, step=0.5)
-        with ld3:
-            wall_line = st.number_input("Wall Line Load (kN/m)", value=50.4, min_value=0.0, step=5.0)
-        with ld4:
-            st.caption("Wall line load is informational; wall geometry below is used by the model.")
         wh1, wh2, wh3 = st.columns(3)
         with wh1:
             wall_h = st.number_input("Wall Height (m)", value=2.8, min_value=0.0, step=0.1)
@@ -670,12 +689,11 @@ elif module == "Whole Building Automated Design":
             wall_t = st.number_input("Wall Thickness (m)", value=0.20, min_value=0.0, step=0.01)
         with wh3:
             wall_uw = st.number_input("Wall Unit Weight (kN/m³)", value=18.0, min_value=0.0, step=1.0)
+        st.caption(f"Derived wall line load = {wall_h * wall_t * wall_uw:.2f} kN/m (from the wall geometry above).")
         market_rate = st.number_input("Current Steel Market Rate (KES / Tonne)", value=145000.0, step=5000.0, format="%.2f")
         run_building = st.form_submit_button("Calculate Whole Building", type="primary")
     show_visuals = st.checkbox("Show interactive diagrams and 3D model", value=False)
     if run_building:
-        if wall_h * wall_t * wall_uw > 0 and abs(wall_h * wall_t * wall_uw - wall_line) > 0.5:
-            st.caption(f"Calculated wall line load = {wall_h * wall_t * wall_uw:.1f} kN/m")
         b_model = BuildingModel(
             bay_lx=grid_x, bay_ly=grid_y, num_storeys=num_floors,
             h_slab=st.session_state.project_data["slab_thick"],
@@ -986,12 +1004,11 @@ elif module == "Beam Design":
             st.plotly_chart(fig_beam, use_container_width=True)
         st.markdown("---")
         st.subheader("Internal Force Diagrams (BMD & SFD)")
-        lengths_used = [s["length_m"] for s in b_res["spans_detail"]]
-        if len(set(lengths_used)) == 1:
-            fig_analysis = DiagramPlotter.plot_beam_bmd_sfd(span_m=lengths_used[0], w_ult_kN_m=b_res["w_ult_kN_m"], num_spans=b_res["num_spans"])
-            st.plotly_chart(fig_analysis, use_container_width=True)
-        else:
-            st.info("This illustrative BMD/SFD diagram currently only renders for equal-span beams. Your spans differ — use the per-span moment/shear values in the table above, which come from the real analysis, for design.")
+        st.caption("Plotted directly from the per-span end moments and shears used for design — not a generic textbook envelope.")
+        fig_analysis = DiagramPlotter.plot_beam_diagrams(
+            b_res["spans_detail"], default_w_ult=b_res.get("w_ult_kN_m")
+        )
+        st.plotly_chart(fig_analysis, use_container_width=True)
 
 # ==========================================
 # 4. COLUMN TAKEDOWN & DESIGN (RCC51)
@@ -1102,7 +1119,17 @@ elif module == "Column Design":
                 st.rerun()
 
         if not col_res["is_short"]:
-            st.warning(f"⚠️ Slender column: le/h={col_res['slenderness_x']}, le/b={col_res['slenderness_y']} (≥15). Second-order moment included below (BS8110) or flagged NOT CHECKED (EC2).")
+            if code_choice == "Eurocode 2":
+                st.warning(
+                    f"⚠️ Slender column (EN 1992-1-1 5.8.3.1): λx = {col_res['slenderness_x']}, "
+                    f"λy = {col_res['slenderness_y']} vs λlim = {col_res.get('lambda_lim')}. "
+                    "Second-order effects are NOT CHECKED in this release — do not sign this column off from this tool alone."
+                )
+            else:
+                st.warning(
+                    f"⚠️ Slender column: le/h = {col_res['slenderness_x']}, le/b = {col_res['slenderness_y']} "
+                    "(> 15). The BS 8110 additional moment is included below."
+                )
 
         st.markdown("##### Biaxial moment-axial interaction (simplified)")
         mcol1, mcol2, mcol3 = st.columns(3)
@@ -1169,7 +1196,15 @@ elif module == "Pad Footing Design":
         with col2:
             N_u = st.number_input("Ultimate Axial Load (kN)", value=float(default_n_ult), min_value=0.0, step=50.0, disabled=use_column_loads)
         with col3:
-            override = st.checkbox("Use Auto-Imported Footing Dimensions from Drawing", value=True)
+            pad_detected = bool(
+                st.session_state.project_data.get("has_drawing")
+                and st.session_state.project_data.get("pad_dim_detected")
+            )
+            if pad_detected:
+                override = st.checkbox("Use Auto-Imported Footing Dimensions from Drawing", value=True)
+            else:
+                override = False
+                st.caption("No pad size was detected in the uploaded drawing — the footing will be auto-sized from the load and soil capacity.")
         cc1, cc2 = st.columns(2)
         with cc1:
             col_cx_in = st.number_input("Column Width, cx (mm)", value=float(default_col_cx), step=25.0)
@@ -1191,11 +1226,16 @@ elif module == "Pad Footing Design":
         except ValueError as exc:
             st.error(f"Input error: {exc}")
             st.stop()
-        if override and st.session_state.project_data["has_drawing"]:
+        use_imported = bool(override and pad_detected)
+        if use_imported:
             pad_L, pad_B = pad_default_m, pad_default_m
         else:
             pad_L, pad_B, _ = footing.size_plan_dimensions()
-        st.session_state.design_results["footing"] = stamp_settings({"result": footing.design_reinforcement_and_shear(pad_L, pad_B), "pad_L": pad_L, "pad_B": pad_B, "used_imported_dimensions": bool(override and st.session_state.project_data["has_drawing"])})
+        footing_result = stamp_settings(footing.design_reinforcement_and_shear(pad_L, pad_B))
+        st.session_state.design_results["footing"] = stamp_settings({
+            "result": footing_result, "pad_L": pad_L, "pad_B": pad_B,
+            "used_imported_dimensions": use_imported,
+        })
         st.session_state.design_inputs["footing"] = dict(N_service=n_serv_to_use, N_ultimate=n_u_to_use, col_cx=col_cx_in, col_cy=col_cy_in, q_allowable=qa, h_overall=h_overall_in, cover=cover, f_cu=f_cu, f_y=f_y, code=code_choice)
     saved_footing = st.session_state.design_results.get("footing")
     if saved_footing is None:
@@ -1244,7 +1284,8 @@ elif module == "Pad Footing Design":
         with col_plot:
             fig_foot = SectionVisualizer.draw_footing_elevation(
                 pad_L_m=pad_L, pad_h_mm=f_res.get("h_overall_mm", 450.0),
-                col_dim_mm=footing_inputs.get("col_cx", 200.0), cover_mm=footing_inputs.get("cover", 50.0)
+                col_dim_mm=footing_inputs.get("col_cx", 200.0),
+                cover_mm=f_res.get("cover_mm", 50.0),
             )
             st.plotly_chart(fig_foot, use_container_width=True)
 
@@ -1351,9 +1392,10 @@ elif module == "Stair Design":
         with sc2:
             rise = st.number_input("Step Rise (mm)", value=150.0, step=10.0)
         with sc3:
-            waist = st.number_input("Waist Thickness (mm)", value=150.0, step=10.0)
+            waist = st.number_input("Waist Thickness (mm)", value=175.0, step=10.0)
         with sc4:
-            flight_len = st.number_input("Flight Span (m)", value=2.5, step=0.25)
+            flight_len = st.number_input("Flight Going Length (m)", value=2.4, step=0.25,
+                                         help="Horizontal length of the stepped flight, excluding the landing.")
         st1, st2, st3 = st.columns(3)
         with st1:
             landing_len = st.number_input("Landing Span (m)", value=1.2, min_value=0.1, step=0.1)
@@ -1371,7 +1413,27 @@ elif module == "Stair Design":
         st.stop()
     clear_result("stair", "Clear Calculated Stair Result")
     show_settings_drift_warning(s_res)
-    st.metric("Design Moment (Mu)", f"{s_res['M_u_kNm']} kNm/m")
+    sc1, sc2, sc3 = st.columns(3)
+    sc1.metric("Design Moment (Mu)", f"{s_res['M_u_kNm']} kNm/m")
+    sc2.metric("Design Shear (Vu)", f"{s_res.get('V_u_kN_m', '—')} kN/m")
+    sc3.metric("Effective Span", f"{s_res['L_eff_m']} m")
     st.success(f"**Main Tension Rebar:** {s_res['main_rebar']['description']}")
-    st.info(f"**Deflection screening:** {s_res['deflection_status']} — L/d = {s_res['actual_span_d']}, allowable = {s_res['allowable_span_d']}")
+    st.info(f"**Distribution Steel:** {s_res['dist_rebar']['description']}")
+    if s_res.get("shear_status") == "PASS":
+        st.success(
+            f"**Shear: PASS** — v = {s_res['v_stress_Nmm2']} N/mm² ≤ "
+            f"{s_res['v_capacity_Nmm2']} N/mm²"
+        )
+    else:
+        st.error(
+            f"**Shear: FAIL** — v = {s_res.get('v_stress_Nmm2')} N/mm² > "
+            f"{s_res.get('v_capacity_Nmm2')} N/mm² (increase the waist)"
+        )
+    if s_res.get("deflection_status") in ("PASS", "FAIL"):
+        if s_res["deflection_status"] == "PASS":
+            st.success(f"**Deflection screening: PASS** — L/d = {s_res['actual_span_d']} ≤ {s_res['allowable_span_d']}")
+        else:
+            st.error(f"**Deflection screening: FAIL** — L/d = {s_res['actual_span_d']} > {s_res['allowable_span_d']} (increase waist)")
+    show_audit(s_res.get("audit", {}), "Stair verification")
+    st.caption(f"End reaction to landing/floor beam: {s_res.get('reaction_to_beam_kN_m')} kN/m.")
     download_calc_sheet("Stair Design", s_res, "stair")

@@ -38,18 +38,40 @@ def _hash_pin(pin: str, salt: str) -> str:
     ).hex()
 
 
+def _truthy_env(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _dev_mode_enabled() -> bool:
     """Return True only when explicit local-development bypass is enabled."""
-    return os.getenv("RCC_DEV_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return _truthy_env("RCC_DEV_MODE")
+
+
+def _license_required() -> bool:
+    """Licensing is opt-in.
+
+    The public repository previously locked the whole application behind a
+    PIN/license screen on first run, which stopped any engineer from simply
+    cloning and running it and provided no real protection (the key
+    generator and license store ship in the same repository). Enforcement is
+    now opt-in via RCC_REQUIRE_LICENSE=true for deployments that actually
+    need it.
+    """
+    return _truthy_env("RCC_REQUIRE_LICENSE")
 
 
 def require_access_key() -> None:
-    """PIN-backed access without hard-coded credentials or plaintext PINs.
+    """Optional PIN-backed access without hard-coded credentials.
 
-    Production deployments should store RCC_ADMIN_KEY and license storage in
-    Streamlit Secrets or a proper database. The local JSON fallback is useful
-    for development only.
+    By default the application is open. Set RCC_REQUIRE_LICENSE=true (and a
+    real RCC_ADMIN_KEY / licence store) only if you are deploying a managed
+    commercial instance. The local JSON fallback is for development only.
     """
+    if not _license_required():
+        st.session_state.authenticated = True
+        st.session_state.license_user = "Open Source Mode"
+        return
+
     # Explicit local-development bypass. Keep this OFF in production.
     if _dev_mode_enabled():
         st.session_state.authenticated = True

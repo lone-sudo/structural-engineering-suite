@@ -96,6 +96,7 @@ class StructuralReporter:
             )
         overall = escape(audit.get("overall_status", "NOT CHECKED"))
         limitations = "".join(f"<li>{escape(x)}</li>" for x in data.get("limitations", []))
+        concrete_label = "fck" if code == "Eurocode 2" else "fcu"
 
         meta_rows = "".join(
             f"<tr><td>{escape(str(k))}</td><td>{escape(str(v))}</td></tr>"
@@ -114,12 +115,13 @@ th,td{{border:1px solid #bbb;padding:7px;text-align:left;font-size:13px}}
 th{{background:#eee}} .badge{{padding:3px 7px;border-radius:4px;font-weight:bold}}
 .pass{{background:#d9f2df}} .fail{{background:#ffd9d9}} .nc{{background:#ffeab5}} .warn{{background:#ffeab5}}
 .notice{{border:1px solid #c88;background:#fff5df;padding:14px;margin:15px 0}}
+@media print{{body{{margin:10mm}} .notice{{break-inside:avoid}} table{{break-inside:avoid}}}}
 </style></head><body>
 <h1>Structural RCC Suite — {escape(element_title)} Calculation Sheet</h1>
 <p>{f"<strong>Project:</strong> {escape(project_name)} | " if project_name else ""}
 {f"<strong>Engineer:</strong> {escape(engineer_name)} | " if engineer_name else ""}
-<strong>Code:</strong> {escape(code)} | <strong>Concrete input:</strong> fcu = {f_cu:g} MPa |
-<strong>Steel:</strong> fy = {f_y:g} MPa</p>
+<strong>Code:</strong> {escape(code)} | <strong>Concrete input:</strong> {concrete_label} = {f_cu:g} MPa |
+<strong>Steel:</strong> fyk = {f_y:g} MPa</p>
 <div class="notice"><strong>Engineering status:</strong> {status_badge(overall)}.
 This report is a computer-generated preliminary calculation aid. It is not a
 construction certificate, statutory submission, or substitute for independent
@@ -135,6 +137,7 @@ review by a suitably qualified structural engineer.</div>
     @staticmethod
     def generate_html_report(full_res: Dict, code: str, f_cu: float, f_y: float) -> str:
         pad_L, pad_B, q_service = full_res["pad_size"]
+        concrete_label = "fck" if code == "Eurocode 2" else "fcu"
 
         def status_badge(status: str) -> str:
             cls = {
@@ -162,9 +165,17 @@ review by a suitably qualified structural engineer.</div>
                     f"<td>{status_badge(check['status'])}</td>"
                     f"<td>{escape(check.get('message',''))}</td></tr>"
                 )
+            meta_rows = "".join(
+                f"<tr><td>{escape(str(k))}</td><td>{escape(str(v))}</td></tr>"
+                for k, v in data.items()
+                if k not in {"audit", "limitations", "_design_settings"}
+                and not isinstance(v, dict)
+                and not isinstance(v, (list, tuple))
+            )
             sections.append(
                 f"<h3>{escape(title)}</h3>"
                 f"<p><strong>Overall:</strong> {status_badge(audit.get('overall_status','NOT CHECKED'))}</p>"
+                f"<h4>Key results</h4><table><tr><th>Item</th><th>Value</th></tr>{meta_rows}</table>"
                 f"<table><tr><th>Check</th><th>Demand</th><th>Capacity</th><th>Unit</th><th>Status</th><th>Notes</th></tr>"
                 + "".join(rows) + "</table>"
                 + "<h4>Limitations</h4><ul>"
@@ -183,11 +194,12 @@ th,td{{border:1px solid #bbb;padding:7px;text-align:left;font-size:13px}}
 th{{background:#eee}} .badge{{padding:3px 7px;border-radius:4px;font-weight:bold}}
 .pass{{background:#d9f2df}} .fail{{background:#ffd9d9}} .nc{{background:#ffeab5}} .warn{{background:#ffeab5}}
 .notice{{border:1px solid #c88;background:#fff5df;padding:14px;margin:15px 0}}
+@media print{{body{{margin:10mm}} .notice{{break-inside:avoid}} table{{break-inside:avoid}}}}
 </style></head><body>
 <h1>Structural RCC Suite — Calculation Report</h1>
 <p><strong>Code:</strong> {escape(code)} |
-<strong>Concrete input:</strong> fcu = {f_cu:g} MPa |
-<strong>Steel:</strong> fy = {f_y:g} MPa</p>
+<strong>Concrete input:</strong> {concrete_label} = {f_cu:g} MPa |
+<strong>Steel:</strong> fyk = {f_y:g} MPa</p>
 <div class="notice"><strong>Engineering status:</strong> {status_badge(overall)}.
 This report is a computer-generated preliminary calculation aid. It is not a
 construction certificate, statutory submission, or substitute for independent

@@ -1,6 +1,9 @@
 import plotly.graph_objects as go
 import numpy as np
 
+from core.rebar import RebarSelector
+
+
 class SectionVisualizer:
     """Generates 2D parametric cross-section drawings for concrete structural elements."""
 
@@ -73,9 +76,9 @@ class SectionVisualizer:
         ))
 
         fig.update_layout(
-            title=dict(text=f"Beam Section ({int(b)}mm × {int(h)}mm)", font=dict(color="#e0e0e0", size=13)),
-            xaxis=dict(title=dict(text="Width (mm)", font=dict(color="#aaaaaa")), tickfont=dict(color="#aaaaaa"), gridcolor="#333333", zeroline=False, range=[-20, b + 20]),
-            yaxis=dict(title=dict(text="Depth (mm)", font=dict(color="#aaaaaa")), tickfont=dict(color="#aaaaaa"), gridcolor="#333333", zeroline=False, range=[-20, h + 20]),
+            title=dict(text=f"Beam Section ({int(b)}mm × {int(h)}mm)", font=dict(color="#25313b", size=13)),
+            xaxis=dict(title=dict(text="Width (mm)", font=dict(color="#4a5a68")), tickfont=dict(color="#4a5a68"), gridcolor="#d5dbe0", zeroline=False, range=[-20, b + 20]),
+            yaxis=dict(title=dict(text="Depth (mm)", font=dict(color="#4a5a68")), tickfont=dict(color="#4a5a68"), gridcolor="#d5dbe0", zeroline=False, range=[-20, h + 20]),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(255,255,255,0.03)",
             showlegend=False,
@@ -108,17 +111,15 @@ class SectionVisualizer:
             fillcolor="rgba(0, 0, 0, 0)"
         )
 
-        # Corner bar positions
-        c_x0 = cover + link_dia + (bar_dia / 2.0)
-        c_x1 = b - cover - link_dia - (bar_dia / 2.0)
-        c_y0 = cover + link_dia + (bar_dia / 2.0)
-        c_y1 = h - cover - link_dia - (bar_dia / 2.0)
-
-        bar_coords = [(c_x0, c_y0), (c_x1, c_y0), (c_x0, c_y1), (c_x1, c_y1)]
-        if num_bars == 6:
-            bar_coords.extend([(b/2.0, c_y0), (b/2.0, c_y1)])
-        elif num_bars == 8:
-            bar_coords.extend([(b/2.0, c_y0), (b/2.0, c_y1), (c_x0, h/2.0), (c_x1, h/2.0)])
+        # Use the same shared layout as the DXF export so the on-screen
+        # section and the issued drawing cannot disagree (and so 10/12-bar
+        # columns no longer silently render as four bars).
+        try:
+            bar_coords = RebarSelector.column_bar_positions(
+                int(num_bars), b, h, cover, link_dia, bar_dia
+            )
+        except (ValueError, TypeError):
+            bar_coords = [(cover + link_dia + bar_dia / 2.0, cover + link_dia + bar_dia / 2.0)]
 
         for bx, by in bar_coords:
             fig.add_shape(
@@ -138,9 +139,9 @@ class SectionVisualizer:
         ))
 
         fig.update_layout(
-            title=dict(text=f"Column Section ({int(b)}mm × {int(h)}mm)", font=dict(color="#e0e0e0", size=13)),
-            xaxis=dict(title=dict(text="Width (mm)", font=dict(color="#aaaaaa")), tickfont=dict(color="#aaaaaa"), gridcolor="#333333", zeroline=False, range=[-20, b + 20]),
-            yaxis=dict(title=dict(text="Depth (mm)", font=dict(color="#aaaaaa")), tickfont=dict(color="#aaaaaa"), gridcolor="#333333", zeroline=False, range=[-20, h + 20]),
+            title=dict(text=f"Column Section ({int(b)}mm × {int(h)}mm)", font=dict(color="#25313b", size=13)),
+            xaxis=dict(title=dict(text="Width (mm)", font=dict(color="#4a5a68")), tickfont=dict(color="#4a5a68"), gridcolor="#d5dbe0", zeroline=False, range=[-20, b + 20]),
+            yaxis=dict(title=dict(text="Depth (mm)", font=dict(color="#4a5a68")), tickfont=dict(color="#4a5a68"), gridcolor="#d5dbe0", zeroline=False, range=[-20, h + 20]),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(255,255,255,0.03)",
             showlegend=False,
@@ -193,9 +194,9 @@ class SectionVisualizer:
         ))
 
         fig.update_layout(
-            title=dict(text=f"Footing Elevation ({pad_L_m:.2f}m Base)", font=dict(color="#e0e0e0", size=13)),
-            xaxis=dict(title=dict(text="Length (mm)", font=dict(color="#aaaaaa")), tickfont=dict(color="#aaaaaa"), gridcolor="#333333", zeroline=False, range=[-80, L_mm + 80]),
-            yaxis=dict(title=dict(text="Height (mm)", font=dict(color="#aaaaaa")), tickfont=dict(color="#aaaaaa"), gridcolor="#333333", zeroline=False, range=[-60, pad_h_mm + 350]),
+            title=dict(text=f"Footing Elevation ({pad_L_m:.2f}m Base)", font=dict(color="#25313b", size=13)),
+            xaxis=dict(title=dict(text="Length (mm)", font=dict(color="#4a5a68")), tickfont=dict(color="#4a5a68"), gridcolor="#d5dbe0", zeroline=False, range=[-80, L_mm + 80]),
+            yaxis=dict(title=dict(text="Height (mm)", font=dict(color="#4a5a68")), tickfont=dict(color="#4a5a68"), gridcolor="#d5dbe0", zeroline=False, range=[-60, pad_h_mm + 350]),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(255,255,255,0.03)",
             showlegend=False,
