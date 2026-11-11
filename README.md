@@ -1,103 +1,114 @@
 # Structural RCC Suite
 
-A Streamlit-based preliminary reinforced-concrete design and gravity-load
-workflow.
+A Streamlit workspace for preliminary reinforced-concrete design and
+gravity-load take-down to **BS 8110-1:1997** and **EN 1992-1-1 (Eurocode 2)**.
 
-## Important engineering status
+> **Engineering status:** this is a calculation aid, not a construction-ready
+> design package. Every result must be independently checked by a suitably
+> qualified structural engineer before construction, statutory submission or
+> issue for construction. A result containing `NOT CHECKED` items is not a
+> completed design.
 
-This project is **not a construction-ready structural design package**.
-Outputs are calculation aids and must be independently reviewed by a suitably
-qualified structural engineer before construction, statutory submission, or
-issue-for-construction use.
+The tool deliberately distinguishes:
 
-The application now distinguishes:
+| Status | Meaning |
+|---|---|
+| `PASS` | An implemented check was performed and passed. |
+| `FAIL` | An implemented check was performed and failed. |
+| `NOT CHECKED` | The software does not claim to have performed this check. |
+| `WARNING` | A screening result or applicability limitation needs engineering review. |
 
-- `PASS` — an implemented check passed.
-- `FAIL` — an implemented check failed.
-- `NOT CHECKED` — the software deliberately does not claim that the check was performed.
-- `WARNING` — a screening result requires engineering review.
+## Quick start
 
-A report containing `NOT CHECKED` items is **not a completed design**.
-
-## Scope of the automated building workflow
-
-The whole-building workflow represents a **single representative internal
-gravity bay**:
-
-`Two-way slab -> equal-span beam -> representative internal column -> pad footing`
-
-It does not analyse an entire building frame, lateral system, wind/seismic
-actions, differential settlement, load redistribution between arbitrary bays,
-or foundation-soil interaction.
-
-## Design standards
-
-- **BS 8110** routines are retained for legacy projects. BS 8110 has been
-  withdrawn in the UK; confirm the standard required by the project and local
-  authority.
-- **Eurocode 2** flexural resistance uses explicit design strengths and the
-  rectangular stress-block approach for `fck <= 50 MPa`.
-- The application does **not** claim that every analysis/detailing check is
-  implemented for either code. The report identifies limitations explicitly.
-
-## Load path
-
-Permanent and variable actions are kept separate as `Gk` and `Qk` through the
-gravity-load pipeline. Ultimate actions are formed only at the design stage:
-
-`Ed = gamma_G * Gk + gamma_Q * Qk`
-
-The previous implementation that split an already-factored slab reaction into
-arbitrary 65%/35% dead/live components has been removed.
-
-## Quantities and cost
-
-Steel quantities are generated from the selected reinforcement and explicit
-preliminary cut-length assumptions. No hard-coded steel tonnage is used.
-
-The BBS is still a **preliminary quantity schedule**, not a final bar-bending
-drawing. Laps, anchorage, curtailment, hooks, bends, wastage and project
-detailing rules require engineer review.
-
-## Security
-
-No administrator key or plaintext PIN is stored in source code.
-
-Configure:
-
-```text
-RCC_ADMIN_KEY=<long-random-secret>
+```bash
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
 ```
 
-using Streamlit Secrets or an environment variable. Never commit `.env`,
-`licenses.json`, or real secrets.
+No licence key is required for the public build. Enforcement is opt-in for a
+managed deployment with `RCC_REQUIRE_LICENSE=true` (plus `RCC_ADMIN_KEY` and a
+licence store). See `.env.example`.
 
-For production, replace the local JSON license store with a proper database or
-managed authentication service.
+## What is implemented
+
+- **Continuous beams** — arbitrary number of unequal spans, independent
+  width/depth per span, a real slope-deflection matrix solution, and code
+  pattern loading with the required `1.0Gk` minimum load on unloaded spans.
+  BS 8110 and EC2 flexure, shear, minimum steel, span/depth deflection
+  screening, one-layer bar-fit checks and link schedules.
+- **Columns** — axial take-down, BS 8110/EC2 axial resistance, minimum
+  eccentricity, BS 8110 slender-column additional moments, EC2 slenderness
+  (`λ` vs `λlim`), simplified biaxial interaction, and bar/links selection.
+- **Pad footings** — service bearing sizing, ULS flexure, one-way shear and
+  punching screening (BS 8110 1.5d / EC2 2d), buried-pad cover, and a
+  rectangular-projection check.
+- **Two-way slabs** — BS 8110 Table 3.14 coefficient method for nine panel
+  types, corner/edge conditions, top and bottom steel, shear and deflection
+  screening. Selecting EC2 changes the load factors and resistance, not the
+  BS coefficient table (stated explicitly in the result).
+- **One-way slabs and stairs** — simply-supported strip/flight checks covering
+  flexure, shear, distribution steel and deflection.
+- **Whole-building representative bay** — slab → continuous beam →
+  representative internal column → pad footing, with a preliminary BBS,
+  steel quantity/cost estimate and HTML/DXF exports.
+- **Reporting** — per-element and combined HTML calculation sheets, DXF
+  reinforcement details, and a project dashboard.
+
+## Verification status
+
+| Check | BS 8110 | EC2 |
+|---|---|---|
+| Beam flexure (rectangular) | ✅ | ✅ |
+| Beam shear | ✅ | ✅ |
+| Beam deflection (span/d screening) | ✅ | ✅ |
+| Beam bar fit / links | ✅ (one layer) | ✅ (one layer) |
+| Column axial resistance | ✅ | ✅ |
+| Column slenderness | ✅ (additional moment) | ⚠️ classified, second-order NOT CHECKED |
+| Column biaxial interaction | ⚠️ simplified | ⚠️ simplified |
+| Footing bearing / flexure | ✅ | ✅ |
+| Footing one-way shear | ✅ (unreinforced) | ✅ (unreinforced) |
+| Footing punching | ⚠️ 1.5d screening | ✅ 2d unreinforced |
+| Two-way slab moments | ✅ BS Table 3.14 | ⚠️ BS coefficients used |
+| Slab shear / deflection | ✅ | ✅ |
+| Stair flexure / shear / deflection | ✅ | ✅ |
+| Crack widths, anchorage, laps, curtailment | ❌ | ❌ |
+| T/L-beams, flat slabs, torsion, lateral loads | ❌ | ❌ |
+
+✅ implemented · ⚠️ implemented with a stated limitation · ❌ not implemented
+
+The full engineering review — what works, what is unsafe or missing, what
+should be removed, and a prioritised roadmap — is in
+[`ANALYSIS.md`](ANALYSIS.md).
+
+## Scope and load path
+
+The whole-building workflow represents **one internal gravity bay**:
+
+`two-way slab → equal-span continuous beam → representative internal column → pad footing`
+
+It does not analyse a complete frame, lateral system, wind/seismic actions,
+differential settlement, arbitrary bay redistribution or soil-structure
+interaction. Permanent and variable actions remain separate as `Gk` and `Qk`
+until the design combination is formed:
+
+`Ed = gamma_G * Gk + gamma_Q * Qk`
 
 ## Development
 
 ```bash
-python -m pip install -r requirements.txt
-pytest -q
-python -m compileall .
-streamlit run app.py
+python -m pip install -r requirements-dev.txt
+python -m compileall -q .
+python -m pytest -q
+python -m streamlit run app.py
 ```
 
-## Current limitations
-
-The most important remaining engineering work is:
-
-1. Full continuous-frame analysis for unequal spans and realistic load cases.
-2. Complete EC2 shear and punching design.
-3. Full BS 8110 footing punching design where BS 8110 is contractually required.
-4. Column axial-moment interaction, biaxial bending and second-order effects.
-5. Full serviceability design: deflection, cracking and long-term effects.
-6. Detailed reinforcement anchorage, lap, curtailment and congestion checks.
-7. Wind/seismic/lateral load analysis.
-8. Comprehensive validation against independently calculated benchmark examples.
-
+The test suite includes hand-checkable benchmark cases (simply-supported and
+continuous-beam theory, an RCC94 two-way slab example) plus regression tests
+for every safety fix described in `ANALYSIS.md`.
 
 ## Documentation
 
-See `USER_GUIDE.md` for installation, workflow, verification-status meanings, slab selection, load-path interpretation and the engineering review checklist.
+- [`ANALYSIS.md`](ANALYSIS.md) — complete engineering and product review.
+- [`USER_GUIDE.md`](USER_GUIDE.md) — workflow, status meanings and review checklist.
+- [`USER_MANUAL.md`](USER_MANUAL.md) — detailed module reference.
+- [`CHANGELOG.md`](CHANGELOG.md) — release history.

@@ -1,5 +1,69 @@
 # Changelog
 
+## v29 — Engineering-hardening review: safety fixes, EC2 gaps closed, importer and licence cleanup
+
+A full adversarial review of the calculation engine (see `ANALYSIS.md`).
+Three defects found in this pass could have produced an unsafe design or a
+false PASS; all three are fixed and covered by regression tests.
+
+**P0 fixes**
+
+- **Pattern loading now uses `1.0Gk` on unloaded spans** (BS 8110
+  Cl. 3.2.1.2.2(b), EN 1992-1-1 Cl. 5.1.3). The previous code used the
+  already-factored `1.4Gk`, which *reduced* the sagging moment in the fully
+  loaded span. In a three-span example the old span moment was 70.62 kNm
+  against the correct 72.49 kNm.
+- **Shear-link spacing can no longer be rounded up to a 75 mm minimum.**
+  When the design required less than 75 mm, the old schedule used 75 mm and
+  provided fewer links than required while reporting PASS. It now returns an
+  explicit FAIL and asks for a larger section/link.
+- **EC2 slender columns are classified with `λ` vs `λlim`**, not the BS 8110
+  `le/h < 15` rule. A 200 × 200 column with `le/h = 12.75` is actually
+  `λ = 44.2` against `λlim = 12.4`; it was silently treated as short. Slender
+  EC2 columns now correctly report second-order effects as `NOT CHECKED`.
+
+**Correctness and scope**
+
+- EC2 biaxial exponent now uses the code’s three anchor points
+  (1.0 / 1.5 / 2.0 at 0.1 / 0.7 / 1.0).
+- EC2 span/depth deflection screening (EN 1992-1-1 7.4.2) implemented for
+  beams, one-way and two-way slabs, and stairs.
+- BS 8110 minimum steel now uses 0.24 % for `fy = 250` (was always 0.13 %).
+- Footing one-way shear is checked directly against `v_c`/`v_Rd,c` (no links
+  assumed), so PASS can no longer coexist with demand > capacity.
+- Footing enforces at least 50 mm buried-pad cover and designs the mat for the
+  larger cantilever projection.
+- Beam bars must physically fit the beam width in one layer; otherwise the
+  design reports a bar-fit FAIL instead of drawing an impossible arrangement.
+- Doubly reinforced beams now use a realistic compression-steel lever arm
+  (`d_prime`) instead of zero.
+- Slab/footing spacing selection never rounds into under-provision; it may step
+  up the bar diameter and returns an explicit failure when the demand cannot
+  be met.
+- Stair module now has a full audit and a shear check (previously the dashboard
+  could show “all 0 checks passed”).
+- 10- and 12-bar column sections are drawn correctly in both the UI and DXF.
+- Project save/load keeps numeric values as numbers (no NumPy-to-string drift).
+
+**Honesty and removal**
+
+- Public build is open by default; the licence/PIN gate is opt-in via
+  `RCC_REQUIRE_LICENSE=true`.
+- PDF spans are read only from labelled span/grid lines, and DXF spans are
+  derived from a real axis-aligned grid — no more “any four-digit number” or
+  “any line 2–15 m” detection.
+- Footing “use imported dimensions” is offered only when a pad size was
+  actually detected.
+- EC2 two-way slab label no longer implies an EC2 coefficient method; it states
+  that BS 8110 Table 3.14 coefficients are used with EC2 factors/resistance.
+- Real BMD/SFD plotted from the actual per-span analysis, not a hard-coded
+  two-span formula.
+- BBS includes top slab steel and one beam-bottom row per span.
+- Added `.github/workflows/ci.yml` and a pinned-compatible requirements set.
+
+**Tests:** 68 passing (was 51), including 17 new regression tests in
+`tests/test_engineering_hardening.py`.
+
 ## v28 — Real multi-span beam analysis: unequal lengths, independent depths, uncapped span count
 
 Direct response to engineer feedback: the beam module previously **rejected**

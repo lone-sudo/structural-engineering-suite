@@ -20,8 +20,8 @@ below.
 
 `[paste your live Streamlit URL here before sending]`
 
-No installation needed — it runs in your browser. No login required (the
-license screen has been switched off for this test build).
+No installation needed — it runs in your browser. No login required: the
+public build is open by default.
 
 ## What I'd like you to actually do
 

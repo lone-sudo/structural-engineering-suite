@@ -15,16 +15,20 @@ The application is a calculation aid, not a substitute for an engineer's indepen
    `python -m pytest -q`
 4. Compile-check the Python files:
    `python -m compileall -q .`
-5. For local development testing, enable the temporary development-mode license bypass:
-   `$env:RCC_DEV_MODE="true"`
-6. Start Streamlit:
+5. Start Streamlit:
    `python -m streamlit run app.py`
+
+No licence key is required for the public build. A managed deployment can opt
+into the licence screen with `RCC_REQUIRE_LICENSE=true` plus `RCC_ADMIN_KEY`
+and a licence store.
 
 Do not create a new virtual environment for every application revision if the existing environment already contains the required packages.
 
 ## Global project settings
 
-Set the design code, concrete cube strength and reinforcement yield strength in the sidebar. These settings are shared by the design modules.
+Set the design code, concrete strength (BS 8110 cube `fcu` or EC2 cylinder
+`fck`) and reinforcement yield strength in the sidebar. These settings are
+shared by the design modules.
 
 Current design-code choices are BS 8110 and Eurocode 2. The application should not be treated as demonstrating code compliance for checks that are explicitly marked NOT CHECKED.
 
