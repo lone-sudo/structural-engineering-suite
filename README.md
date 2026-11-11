@@ -54,6 +54,10 @@ licence store). See `.env.example`.
 - **Serviceability** — EC2 cracked-section steel stress and crack width
   (7.3.4) under the quasi-permanent combination for beams, slabs and stairs;
   EC2 anchorage and lap lengths (8.4/8.7) are reported for detailing.
+- **3-D frame analysis** — a rigid-jointed regular-grid frame built from the
+  structural grid: fixed bases, tributary slab loads, wind floor loads,
+  EN 1990/BS 8110 load combinations, member-action envelope, base shear and
+  drift screening.
 - **Whole-building representative bay** — slab → continuous beam →
   representative internal column → pad footing, with a preliminary BBS,
   steel quantity/cost estimate and HTML/DXF exports.
@@ -82,7 +86,9 @@ licence store). See `.env.example`.
 | Anchorage / laps | ❌ | ⚠️ lengths reported, embedment not checked |
 | Curtailment, hooks, bends | ❌ | ❌ |
 | T-beam sagging flexure | ✅ effective flange input | ✅ effective flange input |
-| L-beams, flat slabs, torsion, lateral loads | ❌ | ❌ |
+| 3-D frame / gravity + wind / drift | ✅ screening | ✅ screening |
+| Load combinations (EN 1990 / BS 8110) | ✅ | ✅ |
+| Seismic, flat slabs, foundations, torsion | ❌ | ❌ |
 
 ✅ implemented · ⚠️ implemented with a stated limitation · ❌ not implemented
 
@@ -92,7 +98,13 @@ should be removed, and a prioritised roadmap — is in
 
 ## Scope and load path
 
-The whole-building workflow represents **one internal gravity bay**:
+The **Frame Analysis (Phase 2)** module builds a regular-grid 3-D frame from
+the geometry and analyses gravity + wind combinations. It assumes rigid
+joints, fixed bases, no floor-diaphragm flexibility, no soil-structure
+interaction and no seismic action; it is a screening model.
+
+The separate **Whole Building Automated Design** workflow remains a
+representative gravity bay:
 
 `two-way slab → equal-span continuous beam → representative internal column → pad footing`
 

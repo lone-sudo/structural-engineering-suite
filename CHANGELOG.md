@@ -1,5 +1,37 @@
 # Changelog
 
+## v31 — Phase 2a: 3-D frame analysis, load combinations, wind and drift
+
+**New analysis core**
+
+- `core/frame_analysis.py`: linear-elastic 3-D frame stiffness solver with
+  6-DOF nodes, Euler-Bernoulli members, rigid joints, nodal loads, member
+  UDLs, fixed bases, reactions, member end forces and internal-force recovery.
+- `pipeline/frame.py`: builds a regular-grid frame from the existing
+  `GridGeometry` (columns + beams at every floor), distributes slab load by
+  tributary width, adds column self-weight and wind floor loads, runs all
+  ULS/SLS combinations in X and Y, and extracts member-action envelopes,
+  base shear and storey drift.
+- `core/load_combinations.py`: EN 1990 and BS 8110 combinations with ψ
+  factors.
+- `core/wind_load.py`: simple EN 1991-1-4-style velocity pressure and exposure
+  screening.
+- New **Frame Analysis (Phase 2)** UI module: drift check, base shear, load
+  combinations and member envelope table.
+
+**Validation**
+
+- Benchmarks for simply supported, fixed-fixed and cantilever beams,
+  portal-frame horizontal/vertical equilibrium, load-combination factors,
+  wind monotonicity, frame base shear and a deliberate drift failure.
+- **Tests:** 92 passing.
+
+**Scope**
+
+- Assumes rigid joints, fixed bases, no floor-diaphragm flexibility, no
+  soil-structure interaction, no seismic action and no second-order frame
+  effects. Flat slabs, foundation options and IFC/SAF exchange remain open.
+
 ## v30 — Phase-1 design depth: strain-compatibility columns, EC2 second order, crack width, anchorage
 
 Implements the highest-priority remaining items from `ANALYSIS.md` §8.

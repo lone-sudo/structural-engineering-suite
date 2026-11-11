@@ -31,8 +31,8 @@ formulae against BS 8110-1:1997 and EN 1992-1-1.
 > - **T-beam sagging flexure** is implemented for an engineer-supplied
 >   effective flange width and slab thickness; hogging remains the
 >   rectangular web. L-beams and web/flange shear are not implemented.
-> - **Tests** increased from 69 to 84, including section-capacity,
->   crack-width, anchorage, T-beam and EC2 second-order regressions.
+> - **Tests** increased from 69 to 92, including section-capacity,
+>   crack-width, anchorage, T-beam, frame and EC2 second-order regressions.
 >
 > Updated scorecard: correctness within scope **8/10**, design completeness
 > **6/10**, verification **5/10**, overall as a preliminary tool **7/10**,
@@ -43,6 +43,35 @@ formulae against BS 8110-1:1997 and EN 1992-1-1.
 > moment transfer, fire resistance, lateral/frame analysis, whole-building
 > tributary take-down, and independent verification of the remaining eight
 > BS 8110 Table 3.14 panel cases.
+
+> ### v31 addendum — Phase 2a: frame analysis and wind
+>
+> Implemented:
+>
+> - **3-D frame stiffness solver** (`core/frame_analysis.py`): 6-DOF nodes,
+>   Euler-Bernoulli members, rigid joints, nodal loads, member UDLs, fixed
+>   bases, reactions, end forces and internal-force recovery.
+> - **Regular-grid frame builder** (`pipeline/frame.py`): columns/beams from
+>   the existing `GridGeometry`, tributary slab loads to beams, column
+>   self-weight, wind floor loads, EN 1990 / BS 8110 combinations, X/Y wind
+>   envelopes, base shear, storey drift and max lateral displacement.
+> - **Wind screening** (`core/wind_load.py`) and **load combinations**
+>   (`core/load_combinations.py`).
+> - **Frame Analysis UI**: run, inspect combinations, member-action envelope,
+>   base shear and drift.
+> - **Benchmarks/tests**: simply supported beam, fixed-fixed beam, cantilever,
+>   portal-frame equilibrium, load combinations, wind monotonicity, frame
+>   base shear, drift failure.
+>
+> Updated scorecard: analysis capability **6/10**, design completeness
+> **6.5/10**, overall as a preliminary tool **7.5/10**, overall as a full
+> analysis model **4.5/10**.
+>
+> Still open in Phase 2: flat slabs and punching with moment transfer,
+> foundation options (strip/raft/pile), seismic action, second-order frame
+> effects, floor-diaphragm flexibility, semi-rigid joints, IFC/SAF import/
+> export, and connecting the frame envelope directly into the member design
+> workflow.
 
 ---
 
@@ -161,7 +190,7 @@ app.py  (Streamlit UI, session state, project save/load, exports)
 │   ├── dxf_reader.py      grid extraction from DXF
 │   └── pdf_reader.py      text/render extraction from PDF
 │
-└── tests/                 84 tests (theory, RCC94 benchmark, regressions)
+└── tests/                 92 tests (theory, RCC94 benchmark, regressions)
 ```
 
 The design is sensibly layered: `<element>.design_*()` returns a dictionary with
@@ -221,8 +250,8 @@ overclaiming; the problems were genuine engineering mistakes, not marketing.
 
 The original suite already tested engineering theory rather than just code
 paths (two-span and three-span closed-form results, an RCC94 slab benchmark,
-load-path regressions). That is the right instinct. This review pass added 33
-tests covering the defects below and the v30 Phase-1 features.
+load-path regressions). That is the right instinct. This review pass added 41
+tests covering the defects below and the v30/v31 analysis features.
 
 ---
 
@@ -676,18 +705,20 @@ Hogging still uses the rectangular web.
 Two-way slabs are on beams/walls. Flat slabs, edge columns, unbalanced moments
 and punching reinforcement are out of scope.
 
-**O-08. No lateral, wind, seismic or frame analysis.**
-The beam is a continuous beam on rigid supports. Columns do not receive
-moments from a frame; the user must supply `Mx`/`My` from elsewhere. There is
-no sway, no second-order frame effect, no load combination with `ψ` factors.
+**O-08. (v31: gravity + wind frame implemented; seismic/second-order open) Lateral/frame analysis.**
+A 3-D rigid-jointed frame with wind floor loads, EN 1990/BS 8110 combinations,
+base shear and drift is now implemented. Still open: seismic action (no
+response spectrum or equivalent static base shear), second-order frame
+effects/sway buckling, floor-diaphragm flexibility, semi-rigid joints, and
+torsional building response.
 
-**O-09. The whole-building load path is a representative bay, not a tributary
-analysis.**
-The slab line loads passed to the beam are moment-equivalent UDLs, which are
-conservative for the beam but not the true reactions. The column load is
-`2 ×` the beam reaction, which is a modelling assumption, not a general
-tributary-area take-down. It is labelled, but the user must not treat the
-result as a whole-building column load.
+**O-09. (v31: frame tributary loads implemented; whole-building bay still open) Load take-down.**
+The frame builder distributes slab load to each beam by tributary width and
+lets the frame analysis produce column axial loads, base shear and drift. The
+older Whole Building workflow still uses a representative internal bay with
+moment-equivalent beam UDLs; its column load is a modelling assumption, not a
+general whole-building take-down. The two workflows are clearly separated in
+the UI.
 
 **O-10. Footing design is gravity-only and concentric.**
 No eccentric load, moment transfer, overturning, sliding, settlement,
@@ -754,7 +785,7 @@ reproducible years later; add a lock file (pip-tools/uv) and record the resolved
 versions in the calculation report.
 
 **O-23. Test coverage and V&V.**
-84 tests is a good start, CI was added in this pass, but there is no coverage
+92 tests is a good start, CI was added in this pass, but there is no coverage
 measurement, no independent comparison against commercial software, and no
 systematic verification of every code table/formula. The one external benchmark
 (RCC94) is excellent and should be the model for a full validation set.
