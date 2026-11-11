@@ -160,7 +160,17 @@ class ContinuousBeam:
                     "Widen the beam or design a two-layer arrangement with a revised effective depth."
                 )
 
-            if self.code == "BS8110":
+            if span_bars["As_prov"] <= 0:
+                # No valid bar arrangement exists for the flexural demand.
+                # Do not call the shear/deflection routines with As=0: they
+                # correctly reject it, but that would crash the whole design
+                # instead of returning a controlled FAIL.
+                shear = {
+                    "status": "FAIL", "v": None, "vc": None, "v_max": None,
+                    "asv_sv_req": None,
+                    "message": "Shear not determined: no valid longitudinal bar arrangement fits the section.",
+                }
+            elif self.code == "BS8110":
                 shear = BS8110.design_shear(V_design, b_w, d, self.f_cu, self.f_yv, span_bars["As_prov"])
             else:
                 ec2_shear = Eurocode2.design_shear(V_design, b_w, d, f_ck, self.f_yv, span_bars["As_prov"])
@@ -200,10 +210,13 @@ class ContinuousBeam:
                     prefix_bar = "Y" if self.code == "BS8110" else "H"
                     link_schedule = f"{prefix_bar}{self.link_dia} 2-leg links @ {spacing}mm c/c (nominal)"
             else:
-                link_schedule = "Shear reinforcement: NOT DETERMINED (concrete strut capacity exceeded — increase section)"
+                link_schedule = "Shear reinforcement: NOT DETERMINED — see shear audit"
 
             actual_span_d = self.spans[i] * 1000 / d
-            if self.code == "BS8110":
+            if span_bars["As_prov"] <= 0:
+                deflection_status = "NOT CHECKED"
+                allowable_span_d = None
+            elif self.code == "BS8110":
                 basic_ratio = 26.0 if n >= 2 else 20.0
                 defl = BS8110.deflection_check(b_w, d, M_span, span_flex["As_req"], span_bars["As_prov"], self.f_y, basic_ratio=basic_ratio)
                 deflection_status = "PASS" if actual_span_d <= defl["allowable_span_d"] else "FAIL"
@@ -231,14 +244,20 @@ class ContinuousBeam:
                       demand=supp_flex["As_req"], capacity=supp_bars["As_prov"], unit="mm²")
             audit.add(f"{tag} — Shear", CheckStatus.PASS if shear["status"] == "PASS" else CheckStatus.FAIL if shear["status"] == "FAIL" else CheckStatus.NOT_CHECKED,
                       demand=shear.get("v"), capacity=shear.get("v_max"), unit="N/mm²", message=shear.get("message", ""))
-            if self.code == "BS8110":
+            if deflection_status == "NOT CHECKED":
+                audit.add(
+                    f"{tag} — Deflection (span/depth screening)", CheckStatus.NOT_CHECKED,
+                    demand=round(actual_span_d, 2), unit="span/d",
+                    message="Deflection not assessed because no valid longitudinal bar arrangement was selected.",
+                )
+            elif self.code == "BS8110":
                 audit.add(f"{tag} — Deflection (span/depth screening)", CheckStatus.PASS if deflection_status == "PASS" else CheckStatus.FAIL,
                           demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
                           message="Simplified BS 8110 3.4.6 screening check; not a full long-term deflection calculation.")
             else:
                 audit.add(f"{tag} — Deflection (span/depth screening)", CheckStatus.PASS if deflection_status == "PASS" else CheckStatus.FAIL,
                           demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
-                          message="EN 1992-1-1 7.4.2 span/effective-depth screening using Expressions (7.16) and "
+                          message="EN 1992-1-1 7.4.2 span/depth screening using Expressions (7.16) and "
                                   "the UK NA cap; not a full long-term deflection calculation.")
             if detailing_note:
                 audit.add(f"{tag} — Bar fit", CheckStatus.FAIL,

@@ -61,7 +61,7 @@ false PASS; all three are fixed and covered by regression tests.
 - BBS includes top slab steel and one beam-bottom row per span.
 - Added `.github/workflows/ci.yml` and a pinned-compatible requirements set.
 
-**Tests:** 68 passing (was 51), including 17 new regression tests in
+**Tests:** 69 passing (was 51), including 18 new regression tests in
 `tests/test_engineering_hardening.py`.
 
 ## v28 — Real multi-span beam analysis: unequal lengths, independent depths, uncapped span count

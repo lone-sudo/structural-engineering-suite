@@ -3,6 +3,7 @@
 **Review date:** 11 November 2026  
 **Repository:** `lone-sudo/structural-engineering-suite`  
 **Reviewed revision:** `9dba31e` (multi-span beam analysis)  
+**Fixes applied in this pass:** `f3a1d6e` on `main`, tag `v29`  
 **Scope of review:** every source module, the test suite, the documentation, the
 UI workflow, the exported DXF/HTML/BBS artefacts, and the engineering
 formulae against BS 8110-1:1997 and EN 1992-1-1.
@@ -124,7 +125,7 @@ app.py  (Streamlit UI, session state, project save/load, exports)
 │   ├── dxf_reader.py      grid extraction from DXF
 │   └── pdf_reader.py      text/render extraction from PDF
 │
-└── tests/                 68 tests (theory, RCC94 benchmark, regressions)
+└── tests/                 69 tests (theory, RCC94 benchmark, regressions)
 ```
 
 The design is sensibly layered: `<element>.design_*()` returns a dictionary with
@@ -184,7 +185,7 @@ overclaiming; the problems were genuine engineering mistakes, not marketing.
 
 The original suite already tested engineering theory rather than just code
 paths (two-span and three-span closed-form results, an RCC94 slab benchmark,
-load-path regressions). That is the right instinct. This pass added 17 tests
+load-path regressions). That is the right instinct. This pass added 18 tests
 covering the defects below.
 
 ---
@@ -715,7 +716,7 @@ reproducible years later; add a lock file (pip-tools/uv) and record the resolved
 versions in the calculation report.
 
 **O-23. Test coverage and V&V.**
-68 tests is a good start, CI was added in this pass, but there is no coverage
+69 tests is a good start, CI was added in this pass, but there is no coverage
 measurement, no independent comparison against commercial software, and no
 systematic verification of every code table/formula. The one external benchmark
 (RCC94) is excellent and should be the model for a full validation set.

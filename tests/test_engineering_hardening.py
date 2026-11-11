@@ -92,6 +92,19 @@ def test_beam_bars_must_fit_the_beam_width_in_one_layer():
     assert all(o["max_bars_per_layer"] >= 2 for o in opts2)
 
 
+def test_beam_with_no_valid_bar_layout_returns_fail_instead_of_crashing():
+    # The new one-layer bar-fit check can legitimately find no arrangement.
+    # That must be a controlled FAIL, not a ValueError from the shear routine.
+    res = ContinuousBeam(
+        [5.0], b_w=200, h_overall=450, gk_slab=200, qk_slab=100,
+        wall_height=0, code="BS8110",
+    ).design_beam()
+    assert res["span_bars"]["As_prov"] == 0
+    assert res["shear_status"] == "FAIL"
+    assert res["deflection_status"] == "NOT CHECKED"
+    assert res["audit"]["overall_status"] == "FAIL"
+
+
 def test_footing_one_way_shear_audit_cannot_show_pass_with_demand_over_capacity():
     f = PadFooting(N_service=2000, N_ultimate=2800, col_cx=300, col_cy=300,
                    q_allowable=150, h_overall=300, code="BS8110")
