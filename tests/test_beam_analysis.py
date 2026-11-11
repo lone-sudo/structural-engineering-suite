@@ -80,7 +80,10 @@ def test_envelope_matches_all_loaded_case_when_there_is_no_live_load():
     # must reduce exactly to the plain all-spans-loaded classic result.
     from core.beam_analysis import envelope_analysis, SpanLoadInput
     w, L = 10.0, 6.0
-    r = envelope_analysis([SpanLoadInput(length_m=L, I_relative=1.0, gk_kn_m=w, qk_kn_m=0.0) for _ in range(3)])
+    r = envelope_analysis([
+        SpanLoadInput(length_m=L, I_relative=1.0, gk_kn_m=w, qk_kn_m=0.0, gamma_g=1.0, gamma_q=1.6)
+        for _ in range(3)
+    ])
     expected = w * L ** 2 / 10
     assert abs(r[0].M_right_support_kNm - expected) < 1e-3
 
@@ -94,8 +97,13 @@ def test_pattern_loading_governs_over_all_spans_loaded_when_live_load_present():
     # (unsafe) design change, not just a precision regression.
     from core.beam_analysis import envelope_analysis, SpanLoadInput
     L, gk, qk = 6.0, 6.0, 8.0
-    envelope = envelope_analysis([SpanLoadInput(length_m=L, I_relative=1.0, gk_kn_m=gk, qk_kn_m=qk) for _ in range(3)])
-    all_loaded = analyze_continuous_beam([SpanInput(length_m=L, I_relative=1.0, w_ult_kn_m=gk + qk) for _ in range(3)])
+    envelope = envelope_analysis([
+        SpanLoadInput(length_m=L, I_relative=1.0, gk_kn_m=gk, qk_kn_m=qk, gamma_g=1.4, gamma_q=1.6)
+        for _ in range(3)
+    ])
+    all_loaded = analyze_continuous_beam([
+        SpanInput(length_m=L, I_relative=1.0, w_ult_kn_m=1.4 * gk + 1.6 * qk) for _ in range(3)
+    ])
     assert envelope[0].M_span_max_kNm > all_loaded[0].M_span_max_kNm
     # Envelope support moments must never be LOWER than the all-loaded case either.
     assert envelope[0].M_right_support_kNm >= all_loaded[0].M_right_support_kNm - 1e-6

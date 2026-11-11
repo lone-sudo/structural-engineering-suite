@@ -50,13 +50,16 @@ class BS8110:
             As_req = M_prime / (0.95 * f_y * z) + As_comp
             section_type = "Doubly Reinforced"
 
-        # BS 8110 Table 3.25: for a rectangular section with fy=460 MPa,
-        # minimum tension steel is 0.13% of gross concrete area (b*h).
-        # Callers that know the overall depth pass min_steel_h; otherwise
-        # retain the historical d-based fallback for compatibility.
+        # BS 8110 Table 3.25: for a rectangular section the minimum tension
+        # steel is 0.13% of the gross concrete area (b*h) for fy = 460 MPa,
+        # but 0.24% for fy = 250 MPa. The previous implementation always used
+        # 0.13%, which under-provides by ~46% when the engineer selects
+        # mild steel. Callers that know the overall depth pass min_steel_h;
+        # otherwise retain the historical d-based fallback for compatibility.
         gross_depth = min_steel_h if min_steel_h is not None else d
         _require_positive("min_steel_h", gross_depth)
-        As_min = 0.0013 * b * gross_depth
+        min_pct = 0.0024 if f_y <= 250.0 else 0.0013
+        As_min = min_pct * b * gross_depth
         As_req = max(As_req, As_min)
 
         return {
@@ -64,6 +67,7 @@ class BS8110:
             "z": z,
             "As_req": As_req,
             "As_comp": As_comp,
+            "As_min": As_min,
             "section_type": section_type,
             "fcd_used": 0.0,
         }
@@ -319,14 +323,72 @@ class Eurocode2:
 
     @staticmethod
     def biaxial_exponent(n_ratio: float) -> float:
-        """EN 1992-1-1 Cl. 5.8.9(4) exponent 'a' for rectangular sections,
-        linearly interpolated between the two defined anchor points
-        (a=1.0 at NEd/NRd<=0.1, a=2.0 at NEd/NRd>=0.7)."""
+        """EN 1992-1-1 Cl. 5.8.9(4) exponent 'a' for rectangular sections.
+
+        The code defines three anchor points, not two: a = 1.0 at
+        NEd/NRd = 0.1, a = 1.5 at 0.7, and a = 2.0 at 1.0, with linear
+        interpolation between them. The previous implementation jumped from
+        1.0 to 2.0 over 0.1-0.7, which over-predicted the biaxial resistance
+        for moderately loaded columns (a non-conservative error).
+        """
         if n_ratio <= 0.1:
             return 1.0
-        if n_ratio >= 0.7:
+        if n_ratio >= 1.0:
             return 2.0
-        return 1.0 + (n_ratio - 0.1) * (2.0 - 1.0) / (0.7 - 0.1)
+        if n_ratio <= 0.7:
+            return 1.0 + (n_ratio - 0.1) * (1.5 - 1.0) / (0.7 - 0.1)
+        return 1.5 + (n_ratio - 0.7) * (2.0 - 1.5) / (1.0 - 0.7)
+
+    @staticmethod
+    def span_depth_limit(
+        f_ck: float, As_req: float, As_prov: float, b: float, d: float,
+        K: float = 1.0, As_comp: float = 0.0, f_yk: float = 500.0,
+        F1: float = 1.0, F2: float = 1.0,
+    ) -> Dict[str, float]:
+        """EN 1992-1-1 Cl. 7.4.2 span/effective-depth deflection screening.
+
+        Expressions (7.16.a)/(7.16.b) give the basic limit N; F1 accounts
+        for flanged sections (1.0 for rectangular), F2 for brittle
+        partitions and F3 for the actual service steel stress. The UK
+        National Annex caps F3 at 1.5 and the final ratio at 40K. This is
+        a screening rule, not a calculated deflection.
+        """
+        for name, value in (("fck", f_ck), ("b", b), ("d", d)):
+            _require_positive(name, value)
+        if As_req < 0 or As_prov < 0 or As_comp < 0:
+            raise ValueError("Reinforcement areas cannot be negative.")
+        if As_req == 0:
+            As_req = 1e-9
+
+        rho = As_req / (b * d)
+        rho_p = As_comp / (b * d)
+        rho_0 = math.sqrt(f_ck) / 1000.0
+
+        if rho <= rho_0:
+            limit = K * (
+                11.0
+                + 1.5 * math.sqrt(f_ck) * (rho_0 / rho)
+                + 3.2 * math.sqrt(f_ck) * max(0.0, rho_0 / rho - 1.0) ** 1.5
+            )
+        else:
+            denom = max(rho - rho_p, 1e-9)
+            limit = K * (
+                11.0
+                + 1.5 * math.sqrt(f_ck) * rho_0 / denom
+                + math.sqrt(f_ck) * math.sqrt(max(rho_p, 0.0) / rho_0) / 12.0
+            )
+
+        # EN 1992-1-1 (7.17), with the UK NA cap on F3.
+        F3 = min(1.5, 500.0 * As_prov / (f_yk * As_req)) if As_prov > 0 else 1.0
+        allowable = min(limit * F1 * F2 * F3, 40.0 * K)
+        return {
+            "allowable_span_d": allowable,
+            "basic_ratio": limit,
+            "K": K,
+            "rho": rho,
+            "rho_0": rho_0,
+            "F3": F3,
+        }
 
 
 def design_flexure(code: str, **kwargs):

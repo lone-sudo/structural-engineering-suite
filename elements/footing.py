@@ -22,7 +22,12 @@ class PadFooting:
                 raise ValueError(f"{name} must be > 0.")
         self.N_serv, self.N_ult = N_service, N_ultimate
         self.cx, self.cy = col_cx, col_cy
-        self.qa, self.h, self.cover = q_allowable, h_overall, cover
+        self.qa, self.h = q_allowable, h_overall
+        # BS 8110 3.3.1.4: concrete cast against an adequate blinding should
+        # have at least 40 mm cover; a buried pad is normally detailed with
+        # 50 mm or more. Do not let the global 25 mm superstructure cover
+        # silently reduce the footing effective depth.
+        self.cover = max(float(cover), 50.0)
         self.f_cu, self.f_y, self.code = f_cu, f_y, code
         self.main_bar_dia = 12
         self.d = h_overall - cover - self.main_bar_dia / 2
@@ -64,8 +69,12 @@ class PadFooting:
         q_u = N_ult_total / area
 
         projection_x = (L - self.cx / 1000) / 2
-        M_ux = q_u * B * projection_x**2 / 2
-        M_per_m = M_ux / B
+        projection_y = (B - self.cy / 1000) / 2
+        # The same bottom mat is used in both directions. Design it for the
+        # larger cantilever projection so a rectangular pad (e.g. one taken
+        # from a drawing) cannot be under-reinforced in the other direction.
+        projection = max(projection_x, projection_y)
+        M_per_m = q_u * projection**2 / 2
 
         if self.code == "BS8110":
             flex = BS8110.design_flexure(M_per_m, 1000, self.d, self.f_cu, self.f_y, min_steel_h=self.h)
@@ -73,12 +82,14 @@ class PadFooting:
             flex = Eurocode2.design_flexure(
                 M_per_m, 1000, self.d, self.f_cu, self.f_y
             )
-        rebar = RebarSelector.select_slab_spacing(flex["As_req"], self.main_bar_dia, max_spacing=300)
+        rebar = RebarSelector.select_slab_spacing(
+            flex["As_req"], self.main_bar_dia, max_spacing=300, max_bar_dia=20
+        )
 
-        # One-way shear at d from the column face.
-        x_crit = projection_x - self.d / 1000
-        Vu_1way = max(0.0, q_u * B * x_crit)
-        v_1way = Vu_1way * 1000 / (B * 1000 * self.d)
+        # One-way shear at d from the column face, in the governing direction.
+        x_crit = projection - self.d / 1000
+        Vu_1way = max(0.0, q_u * x_crit)  # kN per metre width
+        v_1way = Vu_1way * 1000 / (1000 * self.d)
 
         # Punching perimeter: 1.5d for adopted BS screening, 2d for EC2.
         offset = 1.5 * self.d / 1000 if self.code == "BS8110" else 2.0 * self.d / 1000
@@ -102,11 +113,15 @@ class PadFooting:
             vrdc = self._ec2_shear_capacity(rebar["As_prov"], self.d)
             audit.add(
                 "Punching shear", CheckStatus.PASS if v_punch <= vrdc else CheckStatus.FAIL,
-                demand=v_punch, capacity=vrdc, unit="N/mm²"
+                demand=round(v_punch, 4), capacity=round(vrdc, 4), unit="N/mm²",
+                message="EN 1992-1-1 6.4.4 at the 2d control perimeter, unreinforced concrete."
             )
+            # A pad footing is not detailed with shear links. The check must
+            # therefore be v_Ed <= v_Rd,c, not "links can be provided".
             audit.add(
-                "One-way shear", CheckStatus.PASS if v_1way <= vrdc else CheckStatus.FAIL,
-                demand=v_1way, capacity=vrdc, unit="N/mm²"
+                "One-way shear (unreinforced)", CheckStatus.PASS if v_1way <= vrdc else CheckStatus.FAIL,
+                demand=round(v_1way, 4), capacity=round(vrdc, 4), unit="N/mm²",
+                message="EN 1992-1-1 6.2.2 v_Rd,c; no shear reinforcement is assumed in the footing."
             )
         else:
             vc_punch = BS8110.concrete_shear_stress(1000, self.d, self.f_cu, rebar["As_prov"])
@@ -118,13 +133,17 @@ class PadFooting:
                         "(same basis as beam shear); it does not check successive perimeters at 2.25d/3.0d for "
                         "reduced link requirements, so treat a FAIL here as 'increase depth', not as a full link design."
             )
-            shear = BS8110.design_shear(
-                Vu_1way, 1000, self.d, self.f_cu, 250, rebar["As_prov"]
-            )
+            # A pad footing normally has no shear links. Previously this used
+            # design_shear(), which returns PASS as soon as links *could* be
+            # designed, even when v_Ed > v_c — so the audit could display
+            # PASS with demand greater than capacity. Check the concrete
+            # capacity directly instead.
+            vc_1way = BS8110.concrete_shear_stress(1000, self.d, self.f_cu, rebar["As_prov"])
             audit.add(
-                "One-way shear screening", CheckStatus.PASS if shear["status"] == "PASS" else CheckStatus.FAIL,
-                demand=v_1way, capacity=shear.get("vc"), unit="N/mm²",
-                message="Uses the adopted BS 8110 beam shear expression as a screening check."
+                "One-way shear (unreinforced)", CheckStatus.PASS if v_1way <= vc_1way else CheckStatus.FAIL,
+                demand=round(v_1way, 4), capacity=round(vc_1way, 4), unit="N/mm²",
+                message="BS 8110 Table 3.8 vc at the critical section d from the column face; "
+                        "no shear reinforcement is assumed in the footing."
             )
 
         return {
@@ -133,15 +152,24 @@ class PadFooting:
             "q_u_kpa": round(q_u, 3),
             "M_u_kNm_per_m": round(M_per_m, 3),
             "As_req_mm2_m": round(flex["As_req"], 2),
+            "As_min_mm2_m": round(flex.get("As_min", 0.0), 2),
             "rebar": rebar,
             "v_1way_Nmm2": round(v_1way, 4),
             "v_punch_Nmm2": round(v_punch, 4),
             "punching_perimeter_m": round(u1, 3),
             "d_eff_mm": self.d,
+            "cover_mm": round(self.cover, 1),
+            "self_weight_kN": round(footing_gk, 2),
+            "projection_x_m": round(projection_x, 3),
+            "projection_y_m": round(projection_y, 3),
+            "governing_projection_m": round(projection, 3),
             "h_overall_mm": round(self.h, 1),
             "audit": audit.as_dict(),
             "limitations": [
                 "No overturning, sliding, eccentric-load, settlement or soil-structure interaction check.",
+                "A nominal cover of at least 50 mm is enforced for a buried pad, independent of the superstructure cover.",
+                "The same bottom mat is designed for the larger cantilever projection in the two directions; a "
+                "rectangular pad with materially different projections should be detailed with two separate mats.",
                 "BS 8110 punching shear is a screening check at the 1.5d perimeter only; it does not evaluate reduced "
                 "reinforcement at successive perimeters or a full punching shear reinforcement design.",
             ],

@@ -89,8 +89,11 @@ class ContinuousBeam:
             I_list.append(self.b_w_list[i] * self.h_list[i] ** 3 / 12.0)
 
         span_loads = [
-            SpanLoadInput(length_m=self.spans[i], I_relative=I_list[i],
-                          gk_kn_m=gamma_g * gk_total_list[i], qk_kn_m=gamma_q * qk_total_list[i])
+            SpanLoadInput(
+                length_m=self.spans[i], I_relative=I_list[i],
+                gk_kn_m=gk_total_list[i], qk_kn_m=qk_total_list[i],
+                gamma_g=gamma_g, gamma_q=gamma_q,
+            )
             for i in range(n)
         ]
         envelope = envelope_analysis(span_loads)
@@ -118,22 +121,44 @@ class ContinuousBeam:
             M_support = max(abs(envelope[i].M_left_support_kNm), abs(envelope[i].M_right_support_kNm))
             V_design = max(abs(envelope[i].V_left_kN), abs(envelope[i].V_right_kN))
 
+            # Compression-steel centroid. Using 25 mm (the largest bar the
+            # module selects) is conservative for smaller bars: a larger
+            # d_prime increases the required compression steel.
+            d_prime = self.cover + self.link_dia + 12.5
             if self.code == "BS8110":
-                span_flex = design_flexure("BS8110", M_u=M_span, b=b_w, d=d, f_cu=self.f_cu, f_y=self.f_y, min_steel_h=h)
-                supp_flex = design_flexure("BS8110", M_u=M_support, b=b_w, d=d, f_cu=self.f_cu, f_y=self.f_y, min_steel_h=h) if M_support else {"As_req": 0.0, "section_type": "n/a"}
+                span_flex = design_flexure("BS8110", M_u=M_span, b=b_w, d=d, f_cu=self.f_cu, f_y=self.f_y, d_prime=d_prime, min_steel_h=h)
+                supp_flex = design_flexure("BS8110", M_u=M_support, b=b_w, d=d, f_cu=self.f_cu, f_y=self.f_y, d_prime=d_prime, min_steel_h=h) if M_support else {"As_req": 0.0, "section_type": "n/a"}
                 f_ck = None
             else:
                 f_ck = self.f_cu
-                span_flex = design_flexure("Eurocode 2", M_Ed=M_span, b=b_w, d=d, f_ck=f_ck, f_yk=self.f_y)
-                supp_flex = design_flexure("Eurocode 2", M_Ed=M_support, b=b_w, d=d, f_ck=f_ck, f_yk=self.f_y) if M_support else {"As_req": 0.0, "section_type": "n/a"}
+                span_flex = design_flexure("Eurocode 2", M_Ed=M_span, b=b_w, d=d, f_ck=f_ck, f_yk=self.f_y, d_prime=d_prime)
+                supp_flex = design_flexure("Eurocode 2", M_Ed=M_support, b=b_w, d=d, f_ck=f_ck, f_yk=self.f_y, d_prime=d_prime) if M_support else {"As_req": 0.0, "section_type": "n/a"}
 
-            span_opts = RebarSelector.select_beam_bars(span_flex["As_req"], preferred_diameters=(16, 20, 25))
-            supp_opts = RebarSelector.select_beam_bars(supp_flex["As_req"], preferred_diameters=(16, 20, 25))
+            span_opts = RebarSelector.select_beam_bars(
+                span_flex["As_req"], preferred_diameters=(16, 20, 25),
+                b_w=b_w, cover=self.cover, link_dia=self.link_dia, max_layers=1,
+            )
+            supp_opts = RebarSelector.select_beam_bars(
+                supp_flex["As_req"], preferred_diameters=(16, 20, 25),
+                b_w=b_w, cover=self.cover, link_dia=self.link_dia, max_layers=1,
+            )
             span_bars = span_opts[0] if span_opts else {"description": "NO VALID STANDARD ARRANGEMENT", "As_prov": 0}
             supp_bars = supp_opts[0] if supp_opts else (
                 {"description": "2Y12 nominal hanger bars", "As_prov": 226.2, "bar_count": 2, "bar_diameter": 12}
                 if M_support == 0 else {"description": "NO VALID STANDARD ARRANGEMENT", "As_prov": 0}
             )
+            detailing_note = ""
+            if not span_opts:
+                detailing_note = (
+                    "No single-layer bar arrangement fits the beam width for the required span steel. "
+                    "Widen the beam, increase its depth, or design a two-layer arrangement with a revised "
+                    "effective depth — the effective depth used here assumes one layer."
+                )
+            elif not supp_opts and M_support > 0:
+                detailing_note = (
+                    "No single-layer bar arrangement fits the beam width for the required support steel. "
+                    "Widen the beam or design a two-layer arrangement with a revised effective depth."
+                )
 
             if self.code == "BS8110":
                 shear = BS8110.design_shear(V_design, b_w, d, self.f_cu, self.f_yv, span_bars["As_prov"])
@@ -146,15 +171,34 @@ class ContinuousBeam:
 
             if shear["status"] != "FAIL" and shear.get("asv_sv_req") is not None:
                 max_spacing_factor = 0.75
+                max_code_spacing = 250
                 if shear["asv_sv_req"] > 0:
                     area_two_leg = 2 * math.pi * self.link_dia ** 2 / 4
                     raw_sv = area_two_leg / shear["asv_sv_req"]
-                    spacing = min(int(raw_sv // 25) * 25, int(max_spacing_factor * d), 250)
+                    # Spacing must not exceed the required value. Rounding
+                    # down to a 25 mm module is safe; forcing the result back
+                    # up to a 75 mm "practical minimum" is NOT — it would
+                    # provide fewer links than the design requires.
+                    spacing = min(int(raw_sv // 25) * 25, int(max_spacing_factor * d), max_code_spacing)
+                    if spacing < 75:
+                        shear = dict(shear)
+                        shear["status"] = "FAIL"
+                        shear["message"] = (
+                            f"Required link spacing is {raw_sv:.0f} mm, below the 75 mm practical minimum. "
+                            "Increase the section depth/width or use a larger link diameter — do not "
+                            "schedule the 75 mm minimum as if it satisfied the design."
+                        )
+                        link_schedule = (
+                            "Shear reinforcement: NOT DETAILABLE — required link spacing < 75 mm; "
+                            "increase section or link size"
+                        )
+                    else:
+                        prefix_bar = "Y" if self.code == "BS8110" else "H"
+                        link_schedule = f"{prefix_bar}{self.link_dia} 2-leg links @ {spacing}mm c/c"
                 else:
-                    spacing = min(int(max_spacing_factor * d), 250)
-                spacing = max(spacing, 75)
-                prefix_bar = "Y" if self.code == "BS8110" else "H"
-                link_schedule = f"{prefix_bar}{self.link_dia} 2-leg links @ {spacing}mm c/c"
+                    spacing = max(min(int(max_spacing_factor * d), max_code_spacing), 75)
+                    prefix_bar = "Y" if self.code == "BS8110" else "H"
+                    link_schedule = f"{prefix_bar}{self.link_dia} 2-leg links @ {spacing}mm c/c (nominal)"
             else:
                 link_schedule = "Shear reinforcement: NOT DETERMINED (concrete strut capacity exceeded — increase section)"
 
@@ -165,8 +209,20 @@ class ContinuousBeam:
                 deflection_status = "PASS" if actual_span_d <= defl["allowable_span_d"] else "FAIL"
                 allowable_span_d = round(defl["allowable_span_d"], 2)
             else:
-                deflection_status = "NOT CHECKED"
-                allowable_span_d = None
+                # EN 1992-1-1 Cl. 7.4.2 span/effective-depth screening.
+                # K = 1.0 simply supported, 1.3 end span, 1.5 interior span.
+                if n == 1:
+                    k_system = 1.0
+                elif i == 0 or i == n - 1:
+                    k_system = 1.3
+                else:
+                    k_system = 1.5
+                defl = Eurocode2.span_depth_limit(
+                    f_ck, span_flex["As_req"], span_bars["As_prov"], b_w, d,
+                    K=k_system, As_comp=span_flex.get("As_comp", 0.0), f_yk=self.f_y,
+                )
+                deflection_status = "PASS" if actual_span_d <= defl["allowable_span_d"] else "FAIL"
+                allowable_span_d = round(defl["allowable_span_d"], 2)
 
             tag = f"Span {i+1}"
             audit.add(f"{tag} — Flexure at span", CheckStatus.PASS if span_bars["As_prov"] >= span_flex["As_req"] else CheckStatus.FAIL,
@@ -180,24 +236,36 @@ class ContinuousBeam:
                           demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
                           message="Simplified BS 8110 3.4.6 screening check; not a full long-term deflection calculation.")
             else:
-                audit.add(f"{tag} — Deflection (span/depth screening)", CheckStatus.NOT_CHECKED,
-                          demand=round(actual_span_d, 2), unit="span/d",
-                          message="EC2 span/effective-depth screening is not implemented in this release.")
+                audit.add(f"{tag} — Deflection (span/depth screening)", CheckStatus.PASS if deflection_status == "PASS" else CheckStatus.FAIL,
+                          demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
+                          message="EN 1992-1-1 7.4.2 span/effective-depth screening using Expressions (7.16) and "
+                                  "the UK NA cap; not a full long-term deflection calculation.")
+            if detailing_note:
+                audit.add(f"{tag} — Bar fit", CheckStatus.FAIL,
+                          message=detailing_note)
 
             span_results.append({
                 "span_index": i, "length_m": self.spans[i], "b_w": b_w, "h_overall": h, "d_eff_mm": d,
                 "gk_total_kN_m": round(gk_total_list[i], 3), "qk_total_kN_m": round(qk_total_list[i], 3),
+                "w_ult_kN_m": round(gamma_g * gk_total_list[i] + gamma_q * qk_total_list[i], 3),
                 "M_span_kNm": round(M_span, 3), "M_support_kNm": round(M_support, 3), "V_design_kN": round(V_design, 3),
                 "M_left_support_kNm": round(envelope[i].M_left_support_kNm, 3),
                 "M_right_support_kNm": round(envelope[i].M_right_support_kNm, 3),
                 "span_bars": span_bars, "supp_bars": supp_bars, "link_schedule": link_schedule,
                 "shear_status": shear["status"], "deflection_status": deflection_status,
                 "actual_span_d": round(actual_span_d, 2), "allowable_span_d": allowable_span_d,
+                "detailing_note": detailing_note,
             })
 
         governing = max(span_results, key=lambda s: s["span_bars"]["As_prov"] + s["supp_bars"]["As_prov"])
-        reaction_gk = max(gk_reactions)
-        reaction_qk = max(qk_reactions)
+        # Pair the permanent and variable reactions at the SAME support.
+        # Taking max(Gk) and max(Qk) independently can sum reactions from two
+        # different supports and overstate the column load.
+        reaction_index = max(
+            range(n + 1), key=lambda j: gk_reactions[j] + qk_reactions[j]
+        )
+        reaction_gk = gk_reactions[reaction_index]
+        reaction_qk = qk_reactions[reaction_index]
 
         overall_shear_status = "FAIL" if any(s["shear_status"] == "FAIL" for s in span_results) else (
             "NOT CHECKED" if any(s["shear_status"] == "NOT CHECKED" for s in span_results) else "PASS")
@@ -227,11 +295,12 @@ class ContinuousBeam:
             "audit": audit.as_dict(),
             "limitations": [
                 "Both beam ends are assumed simply supported — fixed/built-in ends and cantilever overhangs are not yet implemented.",
-                "Pattern loading covers the standard alternate-span and adjacent-pair load cases; it does not search every possible loading combination, though these are the governing cases for the vast majority of practical UDL-only continuous beams.",
+                "Pattern loading covers all-spans-loaded, each single span loaded, alternate spans, and each adjacent pair; it does not search every possible 2^n combination, though these cases govern the vast majority of practical UDL-only continuous beams.",
                 "Only uniformly distributed load is modelled — point loads are not yet supported.",
-                "Deflection is a simplified span/effective-depth screening check, not a full long-term deflection analysis.",
+                "Deflection is a simplified span/effective-depth screening check, not a full long-term deflection analysis. Compression-steel modification is not applied to the BS 8110 check.",
                 "EC2 shear uses the variable strut inclination method with cot(theta)=2.5; a full theta-optimisation and detailed link curtailment are not implemented.",
                 "Only rectangular sections are supported — T-beam/L-beam (flanged section) design is not yet implemented.",
+                "Beam bars are assumed to fit in ONE layer; arrangements needing two layers are reported as a FAIL rather than silently reducing the effective depth.",
                 "The flat top-level fields (M_span_kNm, span_bars, etc.) report the GOVERNING span (the one with the largest reinforcement demand); see 'spans_detail' for the full per-span breakdown.",
             ],
         }

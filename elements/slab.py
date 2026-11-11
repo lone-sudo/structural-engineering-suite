@@ -67,11 +67,15 @@ class OneWaySlab:
                       demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
                       message="Simplified BS 8110 3.4.6 screening check; not a full long-term deflection calculation.")
         else:
-            deflection_status = "NOT CHECKED"
-            allowable_span_d = None
-            audit.add("Deflection (span/depth screening)", CheckStatus.NOT_CHECKED,
-                      demand=round(actual_span_d, 2), unit="span/d",
-                      message="EC2 span/effective-depth screening is not implemented in this release.")
+            defl = Eurocode2.span_depth_limit(
+                self.f_cu, flex["As_req"], rebar["As_prov"], 1000, self.d,
+                K=1.0, As_comp=flex.get("As_comp", 0.0), f_yk=self.f_y,
+            )
+            deflection_status = "PASS" if actual_span_d <= defl["allowable_span_d"] else "FAIL"
+            allowable_span_d = round(defl["allowable_span_d"], 2)
+            audit.add("Deflection (span/depth screening)", CheckStatus.PASS if deflection_status == "PASS" else CheckStatus.FAIL,
+                      demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
+                      message="EN 1992-1-1 7.4.2 span/depth screening; not a full long-term deflection calculation.")
         return {
             "analysis_method": "Simply supported 1 m strip preliminary analysis",
             "gk_self_kpa": round(self.gk_self, 3),
@@ -235,6 +239,19 @@ class TwoWaySlab:
 
         # This remains a screening span/depth check; no full long-term deflection analysis.
         actual_span_d = self.lx * 1000 / self.dx
+        # EN 1992-1-1 7.4.2 structural-system factor K: 1.0 simply
+        # supported, 1.3 end span, 1.5 interior span.
+        _ec2_k_by_panel = {
+            "Interior Panel": 1.5,
+            "One Short Edge Discontinuous": 1.3,
+            "One Long Edge Discontinuous": 1.3,
+            "Two Adjacent Edges Discontinuous": 1.3,
+            "Two Short Edges Discontinuous": 1.3,
+            "Two Long Edges Discontinuous": 1.3,
+            "Three Edges Discontinuous (One Long Edge Continuous)": 1.0,
+            "Three Edges Discontinuous (One Short Edge Continuous)": 1.0,
+            "Four Edges Discontinuous": 1.0,
+        }
         if self.code == "BS8110":
             # BS 8110 Table 3.9's "continuous" basic ratio (26) applies whenever the
             # SHORT span (the one this check evaluates, self.dx) is continuous over
@@ -259,11 +276,17 @@ class TwoWaySlab:
                       demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
                       message="Simplified BS 8110 3.4.6 screening check on the short-span strip; not a full long-term deflection calculation.")
         else:
-            deflection_status = "NOT CHECKED"
-            allowable_span_d = None
-            audit.add("Deflection (span/depth screening)", CheckStatus.NOT_CHECKED,
-                      demand=round(actual_span_d, 2), unit="span/d",
-                      message="EC2 span/effective-depth screening is not implemented in this release.")
+            k_system = _ec2_k_by_panel.get(self.panel_type, 1.0)
+            defl = Eurocode2.span_depth_limit(
+                self.f_cu, sx["As_req"], sx_bar["As_prov"], 1000, self.dx,
+                K=k_system, As_comp=sx.get("As_comp", 0.0), f_yk=self.f_y,
+            )
+            deflection_status = "PASS" if actual_span_d <= defl["allowable_span_d"] else "FAIL"
+            allowable_span_d = round(defl["allowable_span_d"], 2)
+            audit.add("Deflection (span/depth screening)", CheckStatus.PASS if deflection_status == "PASS" else CheckStatus.FAIL,
+                      demand=round(actual_span_d, 2), capacity=allowable_span_d, unit="span/d",
+                      message="EN 1992-1-1 7.4.2 span/depth screening (K="
+                              f"{k_system:g}); not a full long-term deflection calculation.")
 
         # Service and ultimate tributary line reactions are kept separate.
         gk_short = self.gk_total * self.lx / 3
@@ -276,7 +299,8 @@ class TwoWaySlab:
             "analysis_method": (
                 "BS 8110 Table 3.14 coefficient method"
                 if self.code == "BS8110"
-                else "EC2 two-way slab coefficient method (IStructE Table 8.8 / legacy EC2 manual)"
+                else "BS 8110 Table 3.14 coefficients with EN 1992 load factors and section resistance "
+                     "(no EC2-specific two-way coefficient table is implemented)"
             ),
             "gk_slab_kpa": round(self.gk_total, 3),
             "gk_self_kpa": round(self.gk_self, 3),
@@ -299,8 +323,9 @@ class TwoWaySlab:
             "audit": audit.as_dict(),
             "limitations": [
                 "Coefficient-based two-way slab analysis assumes the tabulated rectangular-panel method and its applicability conditions.",
-                "The EC2 option uses the published EC2/IStructE coefficient table for two-way slabs on linear supports; it is not a finite-element or equivalent-frame analysis.",
-                "Deflection is a simplified span/effective-depth screening check on the short-span strip only (basic ratio taken as 26 for a fully continuous interior panel, 20 otherwise); not a full crack-width or long-term deflection calculation.",
+                "Selecting Eurocode 2 changes the load factors and the section resistance, but the bending-moment analysis still uses the BS 8110 Table 3.14 coefficients. It is not an EC2-specific coefficient method, a finite-element analysis or an equivalent-frame analysis.",
+                "Deflection is a simplified span/effective-depth screening check on the short-span strip only; not a full crack-width or long-term deflection calculation.",
                 "Corner torsion detailing is not yet generated from the selected edge condition.",
+                "The line loads reported for the supporting beams are moment-equivalent UDLs (not raw tributary reactions); they are appropriate for beam bending design but conservative for column load takedown.",
             ],
         }

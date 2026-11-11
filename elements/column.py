@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Dict
 
 from core.rebar import RebarSelector
@@ -80,7 +81,8 @@ class ColumnDesign:
         self.le = 0.85 * clear_height
         self.slenderness_x = self.le / h
         self.slenderness_y = self.le / b
-        self.is_short = self.slenderness_x < 15 and self.slenderness_y < 15
+        self.is_short = self.slenderness_x <= 15 and self.slenderness_y <= 15
+        self.lambda_lim: float | None = None
 
     def design_column(self) -> Dict:
         if self.legacy_ultimate_beam is not None:
@@ -109,6 +111,24 @@ class ColumnDesign:
         N_service = N_serv_beams + self.gk_col_self * self.num_floors
 
         Ag = self.b * self.h
+
+        # EN 1992-1-1 Cl. 5.8.3.1: slenderness is lambda = l0/i and the
+        # limit is lambda_lim = 20 A B C / sqrt(n), NOT the BS 8110 le/h < 15
+        # rule. Applying le/h < 15 to EC2 columns silently treats genuinely
+        # slender columns (lambda is about 3.46 times le/h for a square
+        # section) as short and skips second-order effects.
+        if self.code == "Eurocode 2":
+            f_cd_slender = 0.85 * self.f_cu / 1.5
+            n_slender = N_ult * 1000.0 / max(Ag * f_cd_slender, 1e-9)
+            # Default A = 0.7, B = 1.1, C = 0.7 where phi_ef, omega and rm
+            # are not supplied (EN 1992-1-1 5.8.3.1).
+            self.lambda_lim = 20.0 * 0.7 * 1.1 * 0.7 / max(math.sqrt(n_slender), 1e-9)
+            self.slenderness_x = self.le / (self.h / math.sqrt(12.0))
+            self.slenderness_y = self.le / (self.b / math.sqrt(12.0))
+            self.is_short = (
+                self.slenderness_x <= self.lambda_lim
+                and self.slenderness_y <= self.lambda_lim
+            )
         if self.code == "BS8110":
             # BS 8110-1:1997 Cl. 3.8.4.3, Eq. 38:
             # N = 0.4 fcu Ac + 0.75 fy Asc.
@@ -216,6 +236,7 @@ class ColumnDesign:
             M_allow = M0 * max(0.0, 1.0 - N_ult / N_rd_kN)
             return M_design / M_allow if M_allow > 0 else float("inf")
 
+        has_applied_moment = (self.Mx_applied > 0 or self.My_applied > 0)
         if self.code == "BS8110":
             n_ratio = min(0.6, N_ult * 1000.0 / (self.b * self.h * self.f_cu))
             beta = BS8110.biaxial_beta(n_ratio)
@@ -235,9 +256,21 @@ class ColumnDesign:
             uy = _linear_interaction_utilization(My_design, M0_y)
             if ux == float("inf") or uy == float("inf"):
                 moment_utilization = float("inf")
+            elif not has_applied_moment:
+                # With no applied moment, e0 is the code minimum eccentricity
+                # in the direction being considered (EN 1992-1-1 6.1(4)). It
+                # is not an instruction to apply e0 about BOTH axes and then
+                # combine them biaxially; doing that double-counted the
+                # minimum imperfection and produced false FAILs for ordinary
+                # stocky columns. Check the governing axis alone.
+                moment_utilization = max(ux, uy)
+                biaxial_method = (
+                    "EN 1992-1-1 6.1(4) minimum eccentricity about the governing single axis "
+                    "(no applied Mx/My supplied)."
+                )
             else:
                 moment_utilization = (ux ** a_exp + uy ** a_exp) ** (1.0 / a_exp)
-            biaxial_method = f"EN 1992-1-1 Cl. 5.8.9(4) exponent method (a={a_exp:.2f})."
+                biaxial_method = f"EN 1992-1-1 Cl. 5.8.9(4) exponent method (a={a_exp:.2f})."
 
         moment_status = "PASS" if moment_utilization <= 1.0 + 1e-9 else "FAIL"
 
@@ -277,16 +310,28 @@ class ColumnDesign:
             demand=Asc_calc, capacity=As_prov, unit="mm²",
             message="Required versus provided longitudinal reinforcement."
         )
-        audit.add(
-            "Short-column criterion",
-            CheckStatus.PASS if self.is_short else CheckStatus.WARNING,
-            demand=max(self.slenderness_x, self.slenderness_y), capacity=15.0,
-            unit="-", message="Simplified braced short-column screening criterion (le/h and le/b < 15)."
-        )
+        if self.code == "Eurocode 2":
+            audit.add(
+                "Slenderness criterion (EC2 lambda <= lambda_lim)",
+                CheckStatus.PASS if self.is_short else CheckStatus.WARNING,
+                demand=round(max(self.slenderness_x, self.slenderness_y), 2),
+                capacity=round(self.lambda_lim or 0.0, 2), unit="-",
+                message="EN 1992-1-1 5.8.3.1 with default A=0.7, B=1.1, C=0.7. "
+                        "lambda = l0/i; second-order effects must be considered when lambda exceeds the limit."
+            )
+        else:
+            audit.add(
+                "Short-column criterion (BS 8110 le/h)",
+                CheckStatus.PASS if self.is_short else CheckStatus.WARNING,
+                demand=round(max(self.slenderness_x, self.slenderness_y), 2), capacity=15.0,
+                unit="-", message="BS 8110 braced short-column screening criterion (le/h and le/b <= 15)."
+            )
         if second_order_status == "NOT CHECKED":
             audit.add(
                 "Slenderness — second-order moment", CheckStatus.NOT_CHECKED,
-                message="Column is slender; EC2 second-order (nominal curvature) moments are not implemented for Eurocode 2 in this release."
+                message="Column is slender under EN 1992-1-1 5.8.3.1; the EC2 nominal-curvature second-order "
+                        "moment (5.8.8) is not implemented in this release, so the column cannot be signed off "
+                        "by this tool until that check is completed independently."
             )
         elif second_order_status == "INCLUDED":
             audit.add(
@@ -311,6 +356,12 @@ class ColumnDesign:
             "Qk_total_kN": round(qk_total, 2),
             "slenderness_x": round(self.slenderness_x, 2),
             "slenderness_y": round(self.slenderness_y, 2),
+            "slenderness_basis": (
+                "EN 1992-1-1 5.8.3.1 lambda = l0/i vs lambda_lim"
+                if self.code == "Eurocode 2"
+                else "BS 8110 le/h vs 15"
+            ),
+            "lambda_lim": round(self.lambda_lim, 2) if self.lambda_lim is not None else None,
             "is_short": self.is_short,
             "Asc_req_mm2": round(Asc_calc, 2),
             "Asc_max_mm2": round(Asc_max, 2),

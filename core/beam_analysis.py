@@ -136,29 +136,45 @@ def analyze_continuous_beam(spans: List[SpanInput]) -> List[SpanResult]:
 
 @dataclass
 class SpanLoadInput:
+    """Characteristic span loads plus the project load factors.
+
+    ``gk_kn_m`` and ``qk_kn_m`` are CHARACTERISTIC permanent and variable
+    loads, not pre-factored values. The envelope generator forms the code
+    loading patterns itself, including the 1.0Gk minimum load on unloaded
+    spans. Passing already-factored values here is incorrect: it makes the
+    "unloaded" spans carry 1.4Gk and *reduces* the sagging moment in the
+    fully loaded span, which is unconservative.
+    """
     length_m: float
     I_relative: float
-    gk_kn_m: float  # unfactored... actually ultimate-factored dead UDL for this span
-    qk_kn_m: float  # ultimate-factored live UDL for this span
+    gk_kn_m: float
+    qk_kn_m: float
+    gamma_g: float = 1.4
+    gamma_q: float = 1.6
 
 
 def envelope_analysis(spans: List[SpanLoadInput]) -> List[SpanResult]:
     """Runs the standard BS 8110 / EC2 pattern-loading load cases for a
     continuous beam and returns, per span, the ENVELOPE (worst case across
     all load cases) of span moment, each support moment, and each end
-    shear. Loading every span simultaneously does NOT give the true
-    maximum span moment under live load for a continuous beam — alternating
-    load patterns can govern; skipping this would be unconservative.
+    shear.
 
-    gk_kn_m / qk_kn_m here are already ultimate-factored (gamma_g*Gk,
-    gamma_q*Qk) so they can be summed/selected directly per load case.
+    Code basis: BS 8110-1:1997 Cl. 3.2.1.2.2 and EN 1992-1-1 Cl. 5.1.3
+    require the critical arrangement of
+      a) all spans at the maximum design load, and
+      b) alternate spans at the maximum design load, with all other spans
+         at the MINIMUM design load (1.0Gk, not 1.4Gk).
+    Loading every span simultaneously does NOT give the true maximum span
+    moment under variable load, and using full factored dead load on the
+    unloaded spans does not either.
 
     Load cases run:
-    1. All spans loaded (Gk+Qk everywhere) — the base case.
-    2. Odd spans at Gk+Qk / even at Gk-only, and the mirror image —
-       maximizes span (sagging) moments via alternate-span loading.
-    3. Each adjacent pair of spans at Gk+Qk with all others at Gk-only —
-       maximizes the hogging moment at the support between that pair.
+    1. All spans fully loaded.
+    2. Each single span fully loaded, all others at 1.0Gk — guarantees each
+       span's own maximum sagging moment is captured even for unequal spans.
+    3. Alternate-span loading (both parities).
+    4. Each adjacent pair fully loaded, all others at 1.0Gk — maximises the
+       hogging moment at the support between that pair.
     """
     n = len(spans)
     if n == 0:
@@ -167,6 +183,11 @@ def envelope_analysis(spans: List[SpanLoadInput]) -> List[SpanResult]:
     I = [s.I_relative for s in spans]
     gk = [s.gk_kn_m for s in spans]
     qk = [s.qk_kn_m for s in spans]
+    gamma_g = [s.gamma_g for s in spans]
+    gamma_q = [s.gamma_q for s in spans]
+
+    full = [gamma_g[i] * gk[i] + gamma_q[i] * qk[i] for i in range(n)]
+    minimum = [gk[i] for i in range(n)]  # 1.0Gk, per BS 8110 3.2.1.2.2(b)
 
     def _run(loads: List[float]) -> List[SpanResult]:
         return analyze_continuous_beam([
@@ -174,13 +195,17 @@ def envelope_analysis(spans: List[SpanLoadInput]) -> List[SpanResult]:
         ])
 
     load_cases: List[List[float]] = []
-    load_cases.append([gk[i] + qk[i] for i in range(n)])
-    load_cases.append([gk[i] + qk[i] if i % 2 == 0 else gk[i] for i in range(n)])
-    load_cases.append([gk[i] + qk[i] if i % 2 == 1 else gk[i] for i in range(n)])
+    load_cases.append(list(full))
+    for i in range(n):
+        case = list(minimum)
+        case[i] = full[i]
+        load_cases.append(case)
+    load_cases.append([full[i] if i % 2 == 0 else minimum[i] for i in range(n)])
+    load_cases.append([full[i] if i % 2 == 1 else minimum[i] for i in range(n)])
     for i in range(n - 1):
-        case = list(gk)
-        case[i] = gk[i] + qk[i]
-        case[i + 1] = gk[i + 1] + qk[i + 1]
+        case = list(minimum)
+        case[i] = full[i]
+        case[i + 1] = full[i + 1]
         load_cases.append(case)
 
     envelope = [
