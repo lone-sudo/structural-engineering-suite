@@ -866,19 +866,22 @@ detailing) to one code, with a traceable calculation sheet.
 
 ### Phase 2 — Analysis capability (2–4 months)
 
-1. **2-D/3-D frame stiffness analysis** with rigid/semi-rigid joints, support
-   settlement and multiple load cases.
-2. **Load combinations** (EN 1990 / BS 8110) with `ψ` factors, pattern loading
-   generated automatically, and envelope extraction.
-3. **Lateral systems**: wind and seismic actions, sway classification, second-
-   order frame effects, stability.
+1. **2-D/3-D frame stiffness analysis** — ✅ v31 for rigid joints, fixed
+   bases and multiple load cases. Semi-rigid joints and support settlement
+   remain open.
+2. **Load combinations** — ✅ v31 for EN 1990 / BS 8110 ψ combinations and
+   envelope extraction. Frame pattern loading of live-load spans remains open
+   (beam design still uses the continuous-beam pattern envelope).
+3. **Lateral systems** — ⚠️ v31 for wind screening and drift; seismic action,
+   sway classification and second-order frame effects remain open.
 4. **Flat slabs** (equivalent frame or FE), punching with unbalanced moment,
-   drops/capital design.
-5. **Tributary-area load take-down** from a real grid, replacing the
-   representative-bay approximation.
+   drops/capital design — ❌ open.
+5. **Tributary-area load take-down** — ✅ v31 for the frame workflow; the
+   separate Whole Building representative-bay workflow is unchanged.
 6. **Foundation options**: strip, raft, pile caps; soil bearing and settlement
-   input.
-7. **Import/export**: IFC or SAF, DXF grids, Revit/Tekla interoperability.
+   input — ❌ open.
+7. **Import/export**: IFC or SAF, DXF grids, Revit/Tekla interoperability —
+   ❌ open (DXF grid import already exists).
 
 **Exit criterion:** the tool can analyse a complete regular building frame
 under gravity + lateral loads and extract design actions for every member.
